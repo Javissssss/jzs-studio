@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<style>
+:root{
+  --bg:#FAF9F5; --fg:#141413; --muted:#87867F; --border:#E3DACC;
+  --accent:#C96442; --accent-d:#B04A3F;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);
+  font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  line-height:1.9;font-size:17px}
+.wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
+h1,h2,h3,.serif{font-family:"Noto Serif SC","Songti SC",serif}
+
+/* Hero */
+.hero{padding:24px 0 40px;border-bottom:1px solid var(--border);margin-bottom:40px}
+.eyebrow{font-size:13px;letter-spacing:.2em;color:var(--accent);
+  text-transform:uppercase;margin-bottom:18px;font-weight:600}
+.hero h1{font-size:38px;line-height:1.35;font-weight:700;margin-bottom:16px}
+.lead{font-size:18px;color:var(--muted);line-height:1.8}
+.meta{margin-top:20px;font-size:13px;color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+
+/* TOC */
+.toc{background:#fff;border:1px solid var(--border);border-radius:12px;
+  padding:20px 24px;margin-bottom:44px;font-size:15px}
+.toc b{color:var(--accent-d);display:block;margin-bottom:8px;font-size:14px;letter-spacing:.1em}
+.toc a{color:var(--fg);text-decoration:none;display:block;padding:3px 0}
+.toc a:hover{color:var(--accent)}
+
+/* Sections */
+section{margin-bottom:52px}
+h2{font-size:26px;font-weight:700;display:flex;align-items:baseline;gap:14px;
+  padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:26px}
+.sec-num{font-family:ui-monospace,Consolas,monospace;font-size:15px;
+  color:var(--accent);font-weight:400}
+p{margin-bottom:20px}
+strong{color:var(--accent-d)}
+blockquote{border-left:3px solid var(--accent);padding:4px 0 4px 20px;
+  color:var(--muted);margin:24px 0;font-style:normal}
+
+/* Pull quote card */
+.pull{background:#fff;border:1px solid var(--border);border-left:4px solid var(--accent);
+  border-radius:12px;padding:24px 28px;margin:32px 0;
+  font-family:"Noto Serif SC",serif;font-size:19px;line-height:1.8;color:var(--fg)}
+
+/* Figures */
+figure{margin:32px 0}
+figure img{width:100%;border-radius:12px;border:1px solid var(--border);display:block}
+figcaption{font-size:13px;color:var(--muted);margin-top:10px;text-align:center;
+  font-family:ui-monospace,Consolas,monospace}
+
+/* Closing dark block */
+.close{background:var(--fg);color:var(--bg);border-radius:16px;
+  padding:40px 36px;margin:56px 0 32px;font-family:"Noto Serif SC",serif}
+.close p{font-size:19px;line-height:1.9}
+.close .hl{color:#E8A184;font-weight:700}
+.close .q{margin-top:20px;font-size:15px;color:#B9B8B0;
+  font-family:"Noto Sans SC",sans-serif}
+
+/* Footer */
+footer{border-top:1px solid var(--border);padding-top:24px;
+  font-size:12px;color:var(--muted);line-height:1.8;
+  font-family:ui-monospace,Consolas,monospace}
+
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.hero,.toc,section,.pull,.close,figure{animation:rise .5s ease both}
+.toc{animation-delay:.05s}section:nth-of-type(1){animation-delay:.1s}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <div class="eyebrow">{{栏目名}} · {{YYYY年MM月DD日}}</div>
+    <h1>{{主标题}}</h1>
+    <p class="lead">{{副标题：一句话讲清本文回答什么问题}}</p>
+    <div class="meta">约{{N}}字 · 读完{{M}}分钟</div>
+  </div>
+
+  <nav class="toc">
+    <b>目录</b>
+    <a href="#s1">01 {{H2标题一}}</a>
+    <a href="#s2">02 {{H2标题二}}</a>
+    <a href="#s3">03 {{H2标题三}}</a>
+  </nav>
+
+  <section id="s1">
+    <h2><span class="sec-num">01</span>{{H2标题一}}</h2>
+    <p>{{正文段落。直接切入事件或具体细节，一句话不超过30字。}}</p>
+    <figure>
+      <img src="{{配图路径}}" alt="{{图说}}">
+      <figcaption>{{图说 + 图源标注}}</figcaption>
+    </figure>
+    <div class="pull">{{本节金句，砖红竖条卡片}}</div>
+  </section>
+
+  <section id="s2">
+    <h2><span class="sec-num">02</span>{{H2标题二}}</h2>
+    <p>{{核心机制，用生活比喻讲清楚}}</p>
+  </section>
+
+  <section id="s3">
+    <h2><span class="sec-num">03</span>{{H2标题三：反直觉的那一节}}</h2>
+    <p>{{和常识不一样的地方}}</p>
+  </section>
+
+  <div class="close">
+    <p>{{收口金句，关键词用 <span class="hl">.hl</span> 高亮}}</p>
+    <p class="q">你还有什么{{互动话题}}？评论区留言。</p>
+  </div>
+
+  <footer>
+    数据来源：{{来源列表}}<br>
+    免责声明：行情为已发生的客观描述，不构成任何买卖推荐。
+  </footer>
+
+</div>
+</body>
+</html>
