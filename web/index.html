@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>巨人之上 · 内容工作台</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="bar">
+    <div class="bar-l">
+      <span class="logo-mark">巨</span>
+      <span class="logo-name">内容工作台</span>
+      <div class="proj-switcher">
+        <select id="proj-sel"></select>
+        <button class="btn-icon" id="btn-new" title="新建项目">＋</button>
+        <button class="btn-icon danger" id="btn-del" title="删除项目">×</button>
+      </div>
+    </div>
+    <div class="bar-r" id="health-bar"></div>
+  </header>
+
+  <!-- ===== MAIN SPLIT ===== -->
+  <div class="split">
+
+    <!-- LEFT: ops -->
+    <aside class="ops" id="ops">
+
+      <!-- 1. 选题 -->
+      <section class="block" id="blk-topic">
+        <div class="blk-head" data-blk="topic">
+          <span class="blk-num">1</span>
+          <span class="blk-title">选题</span>
+          <span class="blk-status" id="st-topic"></span>
+          <span class="blk-arrow">▾</span>
+        </div>
+        <div class="blk-body">
+          <div class="seg-row" id="mode-seg">
+            <button class="seg active" data-m="weibo">微博热搜</button>
+            <button class="seg" data-m="toutiao">头条热榜</button>
+            <button class="seg" data-m="manual">手动粘贴</button>
+            <button class="seg" data-m="direct">直接指定</button>
+          </div>
+          <div id="mode-inputs"></div>
+          <button class="btn primary w100 mt6" id="btn-fetch">抓取</button>
+          <div id="cand-list" class="cand-list"></div>
+          <button class="btn accent w100 mt8" id="btn-pick" disabled>选定此题 →</button>
+        </div>
+      </section>
+
+      <!-- 2. 简报 + 回填 -->
+      <section class="block collapsed" id="blk-brief">
+        <div class="blk-head" data-blk="brief">
+          <span class="blk-num">2</span>
+          <span class="blk-title">创作简报 &amp; 回填</span>
+          <span class="blk-status" id="st-brief"></span>
+          <span class="blk-arrow">▾</span>
+        </div>
+        <div class="blk-body">
+          <div class="row-btns">
+            <button class="btn primary" id="btn-gen-brief">生成简报</button>
+            <button class="btn ghost" id="btn-copy-brief" disabled>复制简报</button>
+          </div>
+          <div class="brief-preview" id="brief-preview"></div>
+          <label class="field-label mt8">把 AI 完整回复粘在这里 ↓</label>
+          <textarea id="ai-paste" class="ta mono" rows="8" placeholder="===WECHAT_START===&#10;...&#10;===WECHAT_END===&#10;&#10;（无标记也能用）"></textarea>
+          <button class="btn accent w100 mt6" id="btn-fill">解析回填 →</button>
+          <div id="fill-status" class="fill-status"></div>
+        </div>
+      </section>
+
+      <!-- 3. 配图 + 排版 -->
+      <section class="block collapsed" id="blk-media">
+        <div class="blk-head" data-blk="media">
+          <span class="blk-num">3</span>
+          <span class="blk-title">配图 &amp; 排版</span>
+          <span class="blk-status" id="st-media"></span>
+          <span class="blk-arrow">▾</span>
+        </div>
+        <div class="blk-body">
+          <p class="hint">按正文占位符自动生成：框架图 / 氛围图(Pexels) / 数据图 + 小红书卡片，然后自动排版。约 30-90s。</p>
+          <button class="btn accent w100" id="btn-media">生成配图并排版</button>
+          <div id="media-log" class="media-log"></div>
+        </div>
+      </section>
+
+      <!-- 4. 发布 -->
+      <section class="block collapsed" id="blk-pub">
+        <div class="blk-head" data-blk="pub">
+          <span class="blk-num">4</span>
+          <span class="blk-title">存草稿发布</span>
+          <span class="blk-status" id="st-pub"></span>
+          <span class="blk-arrow">▾</span>
+        </div>
+        <div class="blk-body">
+          <p class="hint red">产品只存草稿，正式发表由你点。</p>
+          <div class="pub-row">
+            <span class="pub-label">公众号</span>
+            <div class="btn-group">
+              <button class="btn primary sm" id="btn-wc-copy">复制富文本</button>
+              <button class="btn ghost sm" id="btn-wc-open">打开后台</button>
+            </div>
+          </div>
+          <div class="pub-row">
+            <span class="pub-label">小红书</span>
+            <div class="btn-group">
+              <button class="btn primary sm" id="btn-xhs-copy">复制文案</button>
+              <button class="btn ghost sm" id="btn-xhs-open">打开平台</button>
+            </div>
+          </div>
+          <button class="btn ghost w100 mt10" id="btn-archive">完成归档</button>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- RIGHT: preview -->
+    <div class="preview" id="preview">
+      <div class="pv-empty" id="pv-empty">
+        <div class="pv-icon">📄</div>
+        <div>新建项目后在左侧操作<br>右侧实时预览</div>
+      </div>
+
+      <div class="pv-stack" id="pv-stack">
+        <!-- topic card -->
+        <div class="pv-card hidden" id="pv-topic">
+          <div class="pv-card-label">当前选题</div>
+          <div class="pv-topic-title" id="pv-topic-title"></div>
+          <div class="pv-topic-meta" id="pv-topic-meta"></div>
+        </div>
+
+        <!-- draft stats -->
+        <div class="pv-card hidden" id="pv-draft">
+          <div class="pv-card-label">稿件概览</div>
+          <div id="pv-draft-stats" class="pv-stats"></div>
+          <div id="pv-xhs-titles" class="pv-xhs-titles"></div>
+          <div id="pv-tags" class="pv-tags"></div>
+        </div>
+
+        <!-- media thumbs -->
+        <div class="pv-card hidden" id="pv-media">
+          <div class="pv-card-label">配图产出</div>
+          <div id="pv-thumbs" class="pv-thumbs"></div>
+        </div>
+
+        <!-- wechat iframe -->
+        <div class="pv-card pv-frame-card hidden" id="pv-render">
+          <div class="pv-card-label-row">
+            <span class="pv-card-label">公众号终版</span>
+            <a class="pv-link" id="pv-render-link" href="#" target="_blank">↗ 新窗口打开</a>
+          </div>
+          <iframe class="pv-frame" id="pv-frame" src="about:blank"></iframe>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="/web/app.js"></script>
+</body>
+</html>
