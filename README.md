@@ -32,7 +32,7 @@ python app.py --port 8770
 
 | 步 | 阶段 | 做什么 | 人工确认点 |
 |----|------|--------|:---:|
-| 1 | 选题 | 百度热搜 / 手动粘贴 / 直接指定，按账号定位（AI·财经·效率）评分排序 | ✅ |
+| 1 | 选题 | 微博热搜 / 头条热榜 / 手动粘贴 / 直接指定，按账号定位（AI·财经·效率）评分排序 | ✅ |
 | 2 | 创作简报 | 一键生成含文风铁律+结构模板+配图规划+输出标记的简报，复制给任意 AI | |
 | 3 | 回填稿件 | 把 AI 完整回复粘进来，按标记自动解析出双平台稿件+配图数据 | |
 | 4 | 配图制作 | 按正文占位符自动生成：框架图 / 氛围图(Pexels) / 数据图 + 小红书卡片 | |
@@ -105,7 +105,7 @@ jzs-studio/
 ├── core/               业务逻辑
 │   ├── config.py       路径/常量/设计Token
 │   ├── state.py        项目状态机
-│   ├── topics.py       选题（百度热搜/手动/直接）
+│   ├── topics.py       选题（微博热搜/头条热榜/手动/直接）
 │   ├── brief.py        创作简报生成 + AI回复解析
 │   ├── media.py        配图（框架图/氛围图/数据图）
 │   ├── render.py       公众号 HTML 排版
@@ -124,15 +124,43 @@ jzs-studio/
 
 ---
 
-## 七、移植到另一台电脑
+## 七、新电脑部署（从 GitHub 克隆）
 
-1. 整个 `jzs-studio/` 目录拷过去（或解压移植包）
-2. 装 Python 3.10+
-3. 双击 `run.bat`（或 `./run.sh`）—— 自动装依赖
-4. 如需氛围配图，`setx PEXELS_API_KEY "..."`
-5. 发布功能需另装 agent-browser（`npm i -g agent-browser`）并首次扫码登录
+```powershell
+# 1. 克隆仓库
+git clone https://github.com/Javissssss/jzs-studio.git
+cd jzs-studio
 
-> workspace/ 里的历史项目会一并带过去，可继续未完成的项目。
+# 2. 安装 Python 依赖
+pip install -r requirements.txt
+
+# 3. 下载 Playwright 浏览器内核（首次，约 100MB）
+python -m playwright install chromium
+
+# 4. 设置 Pexels API Key（永久写入用户环境变量，重开终端生效）
+#    不设则氛围配图不可用，其余功能正常
+[Environment]::SetEnvironmentVariable("PEXELS_API_KEY", "你的key", "User")
+
+# 5. 启动
+$env:PEXELS_API_KEY = [Environment]::GetEnvironmentVariable("PEXELS_API_KEY","User")
+$env:PYTHONUTF8 = "1"
+python app.py --port 8770
+```
+
+Windows 也可直接双击 `run.bat`（自动执行步骤 2-3-5）。
+
+> `workspace/` 不在仓库里，属于本地运行数据，新机器从空白开始。  
+> 历史项目如需迁移，手动把旧机器的 `workspace/` 目录整体复制过来即可。
+
+### 可选：发布功能
+
+发布环节（存草稿）需要 agent-browser：
+
+```powershell
+npm i -g agent-browser   # 需要 Node.js 18+
+```
+
+首次打开公众号/小红书时扫码登录一次，之后免登。
 
 ---
 
