@@ -1,0 +1,59 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+:root{--bg:#FAF9F5;--fg:#141413;--muted:#87867F;--border:#E3DACC;--accent:#C96442;--accent-d:#B04A3F}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:transparent}
+#figure{width:1080px;background:linear-gradient(160deg,#FAF9F5 0%,#F3EFE6 100%);
+  font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  padding:64px 72px;color:var(--fg)}
+.hd{margin-bottom:48px}
+.hd .kick{font-size:20px;letter-spacing:.25em;color:var(--accent);font-weight:600;margin-bottom:14px}
+.hd h1{font-family:"Noto Serif SC",serif;font-size:46px;font-weight:700;line-height:1.3}
+.hd .sub{font-size:22px;color:var(--muted);margin-top:12px}
+.cols{display:flex;gap:32px}
+.col{flex:1;background:#fff;border:1px solid var(--border);border-radius:20px;padding:36px 32px}
+.col.right{border-top:6px solid var(--accent)}
+.col.left{border-top:6px solid var(--muted)}
+.col .name{font-size:30px;font-weight:700;margin-bottom:24px;font-family:"Noto Serif SC",serif}
+.col.right .name{color:var(--accent-d)}
+.col ul{list-style:none}
+.col li{font-size:23px;line-height:1.65;padding:12px 0 12px 34px;position:relative;
+  border-bottom:1px dashed var(--border)}
+.col li:last-child{border-bottom:none}
+.col li::before{content:"";position:absolute;left:4px;top:24px;width:10px;height:10px;
+  border-radius:50%;background:var(--border)}
+.col.right li::before{background:var(--accent)}
+.foot{margin-top:48px;padding-top:24px;border-top:1px solid var(--border);
+  font-size:17px;color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+<div id="figure">
+  <div class="hd">
+    <div class="kick">COMPARISON</div>
+    <h1 id="title"></h1>
+    <div class="sub" id="subtitle"></div>
+  </div>
+  <div class="cols">
+    <div class="col left"><div class="name" id="lname"></div><ul id="litems"></ul></div>
+    <div class="col right"><div class="name" id="rname"></div><ul id="ritems"></ul></div>
+  </div>
+  <div class="foot">巨人之上 · 对比图</div>
+</div>
+<script>
+const D = /*__DATA__*/;
+document.getElementById('title').textContent = D.title || '';
+document.getElementById('subtitle').textContent = D.subtitle || '';
+document.getElementById('lname').textContent = (D.left||{}).name || '';
+document.getElementById('rname').textContent = (D.right||{}).name || '';
+function fill(id, items){
+  const ul = document.getElementById(id);
+  (items||[]).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; ul.appendChild(li); });
+}
+fill('litems',(D.left||{}).items); fill('ritems',(D.right||{}).items);
+</script>
+</body>
+</html>
