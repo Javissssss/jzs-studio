@@ -29,7 +29,7 @@ from . import config
 PERSPECTIVES = {
     "complexity": {
         "name": "复杂系统专家",
-        "slug": "complexity-expert",
+        "slug": "shifenxiyin-perspective",
         "dir": "complexity",
         "concept_sections": ["核心心智模型", "表达风格"],
         "full_sections": ["输出规范", "核心心智模型", "决策启发式", "表达风格"],
