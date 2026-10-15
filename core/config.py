@@ -8,6 +8,24 @@ import sys
 CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 PRODUCT_ROOT = os.path.dirname(CORE_DIR)
 
+
+def _load_dotenv(path):
+    """Minimal .env loader (KEY=VALUE lines). Real env vars win."""
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            v = v.strip().strip('"').strip("'")
+            if k.strip() and v and k.strip() not in os.environ:
+                os.environ[k.strip()] = v
+
+
+_load_dotenv(os.path.join(PRODUCT_ROOT, ".env"))
+
 # Embedded skill package (single source of truth for scripts/templates/references)
 SKILL_DIR = os.path.join(PRODUCT_ROOT, "skill", "jzs-content-publisher")
 SCRIPTS_DIR = os.path.join(SKILL_DIR, "scripts")

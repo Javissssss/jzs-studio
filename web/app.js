@@ -69,6 +69,13 @@ async function loadHealth() {
     ["Playwright", h.playwright, "框架图 / 数据图 / 小红书卡片截图"],
     ["agent-browser", h.agent_browser, "富文本复制 + 扫码登录平台（可选）"],
   ];
+  S.llm = h.llm || {};
+  items.unshift(["写作模型", S.llm.configured, S.llm.configured ? `内置写作：${S.llm.model}` : "未配置：在 .env 填 JZS_LLM_*，即可一键写全文"]);
+  $("write-hint").textContent = S.llm.configured
+    ? `由 ${S.llm.model} 写公众号 + 小红书双稿，约 1–3 分钟。`
+    : "还没配置写作模型：在项目根目录 .env 填 JZS_LLM_BASE_URL / API_KEY / MODEL 后重启。也可用下方外部 AI。";
+  $("btn-write").disabled = !S.llm.configured;
+  if (!S.llm.configured) $("manual-flow").open = true;
   $("health-bar").innerHTML = items.map(([n, on, tip]) =>
     `<span class="h-item" title="${esc(tip)}${on ? "" : " · 未就绪"}"><span class="h-dot ${on ? "on" : ""}"></span>${n}</span>`).join("");
 }
@@ -274,6 +281,30 @@ $("btn-fill").addEventListener("click", (e) => busy(e.currentTarget, async () =>
   if (!txt) return toast("请先粘贴 AI 回复", "err");
   const r = await api(`/api/projects/${S.pid}/draft/fill`, "POST", { ai_output: txt });
   if (!r.ok) return toast(r.error || "解析失败", "err");
+  await afterDraft(r, "回填完成，下一步一键生产");
+}));
+
+$("btn-write").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  if (!requirePid()) return;
+  if (!S.project?.topic?.title) return toast("请先选定题目", "err");
+  const log = $("write-log");
+  const t0 = Date.now();
+  log.innerHTML = `<li class="run">${esc(S.llm.model)} 正在写稿… <span id="write-sec">0</span>s</li>`;
+  const tick = setInterval(() => { const el = $("write-sec"); if (el) el.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
+  let r;
+  try {
+    r = await api(`/api/projects/${S.pid}/draft/write`, "POST", { extra_notes: $("extra-notes").value.trim() }, 360000);
+  } finally { clearInterval(tick); }
+  const sec = Math.round((Date.now() - t0) / 1000);
+  if (!r.ok) {
+    log.innerHTML = `<li class="err">✕ ${esc(r.error || "生成失败")}</li>`;
+    return toast("生成失败，可改用外部 AI", "err");
+  }
+  log.innerHTML = `<li class="ok">✓ ${esc(r.model)} 用时 ${sec}s</li>`;
+  await afterDraft(r, "全文已生成，下一步一键生产");
+}));
+
+async function afterDraft(r, msg) {
   const d = r.project.draft || {};
   const en = r.enriched || {};
   const added = Object.entries({ 氛围图: en.mood, 框架图: en.figure, 数据图: en.chart })
@@ -285,8 +316,8 @@ $("btn-fill").addEventListener("click", (e) => busy(e.currentTarget, async () =>
     : "⚠ 没识别到标记块，已把整段当作公众号正文（小红书卡片会跳过）";
   await loadProjects();
   applyProject(r.project, true);
-  toast("回填完成，下一步一键生产", "ok");
-}));
+  toast(msg, "ok");
+}
 
 function renderDraftCard(d, meta) {
   show("pv-draft", !!d?.wechat_md);
@@ -445,3 +476,12 @@ document.addEventListener("click", (e) => {
   else applyProject(null);
   setInterval(loadHealth, 60000);
 })();
+
+// ── theme ──────────────────────────────────────────────────
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem("jzs-theme", t);
+  document.querySelectorAll("#theme-pick button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+}
+document.querySelectorAll("#theme-pick button").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.t)));
+setTheme(document.documentElement.dataset.theme || "ink");

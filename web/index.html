@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="ink">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>巨人之上 · 内容工作台</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23C96442'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23FAF9F5' font-family='serif' font-weight='700'>巨</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%236366F1'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23FAF9F5' font-family='serif' font-weight='700'>巨</text></svg>">
+<script>document.documentElement.dataset.theme=localStorage.getItem("jzs-theme")||"ink"</script>
 <link rel="stylesheet" href="/web/style.css">
 </head>
 <body>
@@ -23,12 +24,20 @@
     </div>
     <ol class="stepper" id="stepper" aria-label="流程进度">
       <li data-s="topic">选题</li>
-      <li data-s="brief">简报</li>
+      <li data-s="brief">写稿</li>
       <li data-s="media">生产</li>
       <li data-s="review">确认</li>
       <li data-s="publish">存草稿</li>
     </ol>
-    <div class="bar-r" id="health-bar"></div>
+    <div class="bar-r">
+      <div id="health-bar" class="health"></div>
+      <div class="theme-pick" id="theme-pick" role="radiogroup" aria-label="主题">
+        <button data-t="ink" title="墨夜" aria-label="墨夜主题"></button>
+        <button data-t="porcelain" title="青瓷" aria-label="青瓷主题"></button>
+        <button data-t="paper" title="纸白" aria-label="纸白主题"></button>
+        <button data-t="brick" title="砖红" aria-label="砖红主题"></button>
+      </div>
+    </div>
   </header>
 
   <div class="split">
@@ -60,25 +69,33 @@
         </div>
       </section>
 
-      <!-- 2. 简报 + 回填 -->
+      <!-- 2. 写稿 -->
       <section class="block collapsed" id="blk-brief">
         <button class="blk-head" type="button">
           <span class="blk-num">2</span>
-          <span class="blk-title">创作简报 &amp; 回填</span>
+          <span class="blk-title">AI 写全文</span>
           <span class="blk-status" id="st-brief"></span>
           <span class="blk-arrow">▾</span>
         </button>
         <div class="blk-body">
-          <textarea id="extra-notes" class="ta" rows="2" placeholder="补充要求（可选）：如 切入角度、目标读者、必须提到的数据…"></textarea>
-          <button class="btn accent w100" id="btn-gen-brief">生成并复制简报</button>
-          <p class="hint" id="brief-hint">复制后粘给任意 AI（Codex / Kimi / 通义 / 豆包…），再把它的完整回复粘到下面。</p>
-          <details class="brief-details hidden" id="brief-details">
-            <summary>查看简报全文</summary>
-            <pre class="brief-preview" id="brief-preview"></pre>
+          <textarea id="extra-notes" class="ta" rows="2" placeholder="补充要求（可选）：切入角度、目标读者、必须提到的数据…"></textarea>
+          <button class="btn accent w100" id="btn-write">一键生成全文</button>
+          <p class="hint" id="write-hint">调用内置模型写公众号 + 小红书双稿，约 1–3 分钟。</p>
+          <ul id="write-log" class="media-log"></ul>
+
+          <details class="brief-details" id="manual-flow">
+            <summary>没配模型？用外部 AI 写</summary>
+            <div class="manual-body">
+              <button class="btn primary w100" id="btn-gen-brief">生成并复制简报</button>
+              <p class="hint" id="brief-hint">粘给任意 AI（Codex / Kimi / 通义 / 豆包…），再把它的完整回复贴到下面。</p>
+              <details class="brief-details hidden" id="brief-details">
+                <summary>查看简报全文</summary>
+                <pre class="brief-preview" id="brief-preview"></pre>
+              </details>
+              <textarea id="ai-paste" class="ta mono" rows="7" placeholder="粘贴 AI 完整回复（Ctrl+Enter 解析）"></textarea>
+              <button class="btn primary w100" id="btn-fill">解析回填 →</button>
+            </div>
           </details>
-          <label class="field-label" for="ai-paste">AI 完整回复</label>
-          <textarea id="ai-paste" class="ta mono" rows="8" placeholder="===WECHAT_START===&#10;...&#10;===WECHAT_END===&#10;（没有标记也能用，整段视为公众号正文）&#10;&#10;Ctrl+Enter 解析"></textarea>
-          <button class="btn accent w100" id="btn-fill">解析回填 →</button>
           <div id="fill-status" class="fill-status"></div>
         </div>
       </section>
@@ -143,7 +160,7 @@
         <h2>一篇内容，两个平台</h2>
         <ol class="pv-flow">
           <li><b>选题</b>热榜抓取 + 垂直评分</li>
-          <li><b>简报</b>复制给任意 AI 出稿</li>
+          <li><b>写稿</b>AI 一键写出双平台全文</li>
           <li><b>生产</b>配图、卡片、排版全自动</li>
           <li><b>存草稿</b>辅助粘贴，发表由你</li>
         </ol>

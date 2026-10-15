@@ -9,7 +9,7 @@ import traceback
 from flask import Flask, jsonify, request, send_from_directory, abort
 from werkzeug.exceptions import HTTPException
 
-from core import config, state, topics, brief, enrich, media, render, cards, publish
+from core import config, state, topics, brief, enrich, llm, media, render, cards, publish
 
 app = Flask(__name__, static_folder=None)
 config.ensure_dirs()
@@ -176,43 +176,64 @@ def api_brief_generate(pid):
 
 
 # ---------- stage 3: draft fill ----------
+def _apply_ai_output(pid, s, ai_output, overrides=None):
+    """Parse an AI reply into the project draft (+ auto image placeholders)."""
+    o = overrides or {}
+    parsed = brief.parse_ai_output(ai_output)
+    figures = parsed.get("figures", [])
+    charts = parsed.get("charts", [])
+    wechat_md, report = enrich.ensure_placeholders(
+        o.get("wechat_md") or parsed["wechat_md"], s.get("topic", {}).get("title", ""), figures, charts
+    )
+    s["draft"] = {
+        "wechat_md": wechat_md,
+        "xhs_md": o.get("xhs_md") or parsed["xhs_md"],
+        "xhs_titles": o.get("xhs_titles") or parsed["xhs_titles"],
+        "xhs_tags": o.get("xhs_tags") or parsed["xhs_tags"],
+        "figures": figures,
+        "charts": charts,
+    }
+    with open(os.path.join(config.project_dir(pid), "ai_output.md"), "w", encoding="utf-8") as f:
+        f.write(ai_output)
+    s["stage"] = "media"
+    state.log(s, f"draft filled (parsed_ok={parsed['parsed_ok']}, enriched={report})")
+    state.save(pid, s)
+    return {
+        "ok": True,
+        "parsed_ok": parsed["parsed_ok"],
+        "enriched": report,
+        "project": _public(state.load(pid)),
+    }
+
+
 @app.route("/api/projects/<pid>/draft/fill", methods=["POST"])
 def api_draft_fill(pid):
     s = _load_or_404(_safe_pid(pid))
     b = _body()
     ai_output = b.get("ai_output", "")
     if not ai_output.strip():
-        return jsonify({"ok": False, "error": "empty ai_output"}), 400
-    parsed = brief.parse_ai_output(ai_output)
-    # allow manual override of individual fields
-    wechat_md = b.get("wechat_md") or parsed["wechat_md"]
-    figures = parsed.get("figures", [])
-    charts = parsed.get("charts", [])
+        return jsonify({"ok": False, "error": "请先粘贴 AI 回复"}), 400
+    return jsonify(_apply_ai_output(pid, s, ai_output, b))
 
-    # fill image gaps the AI left (cover/section moods, unused figure/chart data)
-    wechat_md, enrich_report = enrich.ensure_placeholders(
-        wechat_md, s.get("topic", {}).get("title", ""), figures, charts
-    )
 
-    s["draft"] = {
-        "wechat_md": wechat_md,
-        "xhs_md": b.get("xhs_md") or parsed["xhs_md"],
-        "xhs_titles": b.get("xhs_titles") or parsed["xhs_titles"],
-        "xhs_tags": b.get("xhs_tags") or parsed["xhs_tags"],
-        "figures": figures,
-        "charts": charts,
-    }
-    s["stage"] = "media"
-    state.log(s, f"draft filled (parsed_ok={parsed['parsed_ok']}, enriched={enrich_report})")
-    state.save(pid, s)
-    return jsonify(
-        {
-            "ok": True,
-            "parsed_ok": parsed["parsed_ok"],
-            "enriched": enrich_report,
-            "project": _public(state.load(pid)),
-        }
-    )
+@app.route("/api/projects/<pid>/draft/write", methods=["POST"])
+def api_draft_write(pid):
+    """Built-in writer: brief -> configured LLM -> full draft, one click."""
+    s = _load_or_404(_safe_pid(pid))
+    topic = s.get("topic") or {}
+    if not topic.get("title"):
+        return jsonify({"ok": False, "error": "请先选定题目"}), 400
+    b = _body()
+    brief_md = brief.generate_brief(topic, extra_notes=b.get("extra_notes", ""))
+    with open(os.path.join(config.project_dir(pid), "brief.md"), "w", encoding="utf-8") as f:
+        f.write(brief_md)
+    try:
+        text = llm.write_draft(brief_md)
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 502
+    out = _apply_ai_output(pid, s, text)
+    out["model"] = llm.settings()["model"]
+    return jsonify(out)
 
 
 @app.route("/api/projects/<pid>/draft", methods=["GET"])
@@ -453,6 +474,7 @@ def api_health():
             "unsplash_key": bool(os.environ.get("UNSPLASH_ACCESS_KEY")),
             "agent_browser": bool(ab) and ab != "agent-browser",
             "playwright": _check_playwright(),
+            "llm": llm.public_info(),
             "workspace": config.WORKSPACE_DIR,
         }
     )

@@ -1,3 +1,4 @@
+import json
 # -*- coding: utf-8 -*-
 """Offline tests for the pure parts of the pipeline (no network, no browser).
 Run: python -m unittest discover -s tests -v
@@ -168,3 +169,72 @@ class TestApi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWriter(unittest.TestCase):
+    """Built-in writer against a fake OpenAI-compatible server."""
+
+    @classmethod
+    def setUpClass(cls):
+        import http.server, threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                cls.seen = (self.path, self.headers.get("Authorization"), body)
+                out = json.dumps({"choices": [{"message": {"content": SAMPLE_AI}}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+
+        cls.tmp = tempfile.mkdtemp(prefix="jzs_test_")
+        cls._orig = config.WORKSPACE_DIR
+        config.WORKSPACE_DIR = cls.tmp
+        cls.srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.env = {
+            "JZS_LLM_BASE_URL": f"http://127.0.0.1:{cls.srv.server_port}/v1",
+            "JZS_LLM_API_KEY": "test-key",
+            "JZS_LLM_MODEL": "fake-model",
+        }
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        config.WORKSPACE_DIR = cls._orig
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_write_full_draft(self):
+        from unittest import mock
+        import app as app_mod
+
+        with mock.patch.dict(os.environ, self.env):
+            c = app_mod.app.test_client()
+            self.assertTrue(c.get("/api/health").get_json()["llm"]["configured"])
+            pid = c.post("/api/projects", json={}).get_json()["project"]["id"]
+            c.post(f"/api/projects/{pid}/topic/select", json={"topic": {"title": "降息之后", "summary": ""}})
+            r = c.post(f"/api/projects/{pid}/draft/write", json={}).get_json()
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(r["parsed_ok"])
+        self.assertEqual(r["model"], "fake-model")
+        self.assertIn("## ", r["project"]["draft"]["wechat_md"])
+        path, auth, body = self.seen
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(auth, "Bearer test-key")
+        self.assertIn("降息之后", body["messages"][1]["content"])
+
+    def test_unconfigured_is_readable_error(self):
+        from unittest import mock
+        import app as app_mod
+
+        with mock.patch.dict(os.environ, {"JZS_LLM_API_KEY": ""}):
+            c = app_mod.app.test_client()
+            pid = c.post("/api/projects", json={}).get_json()["project"]["id"]
+            c.post(f"/api/projects/{pid}/topic/select", json={"topic": {"title": "x"}})
+            res = c.post(f"/api/projects/{pid}/draft/write", json={})
+        self.assertEqual(res.status_code, 502)
+        self.assertIn("未配置写作模型", res.get_json()["error"])
