@@ -110,3 +110,33 @@ def _flush(pending, kind, report):
         lines += ["", f"[{kind}:{key}] {cap}", ""]
         report[kind.lower()] += 1
     return lines
+
+
+def top_up(wechat_md, target, topic_title=""):
+    """Make sure the article has at least `target` image slots: add MOOD slots
+    after the longest H2 sections that have no image yet. Returns (md, added)."""
+    md = wechat_md or ""
+    have = len(PH_RE.findall(md))
+    need = int(target or 0) - have
+    if need <= 0:
+        return md, 0
+    lines = md.splitlines()
+    secs, cur = [], None  # (h2 line index, char count, has_img)
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if s.startswith("## "):
+            cur = [i, 0, False]
+            secs.append(cur)
+        elif cur is not None:
+            if PH_RE.search(s):
+                cur[2] = True
+            elif "[CLOSE]" not in s:
+                cur[1] += len(s)
+    cands = sorted([x for x in secs if not x[2]], key=lambda x: -x[1])[:need]
+    base = cover_query(topic_title)
+    added = 0
+    for n, (idx, _, _) in enumerate(sorted(cands, key=lambda x: -x[0])):
+        q = SECTION_QUERIES[n % len(SECTION_QUERIES)] if n else base
+        lines[idx + 1:idx + 1] = ["", f"[MOOD:{q}] 配图", ""]
+        added += 1
+    return "\n".join(lines), added

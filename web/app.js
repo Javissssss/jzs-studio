@@ -74,7 +74,7 @@ async function runJob(startPath, body, consoleId) {
 // ── health & engines ──
 async function loadHealth() {
   const h = await api("/api/health"); if (!h.ok) return;
-  S.health = h;
+  S.health = h; renderPerspState();
   const items = [
     ["写作 API", h.llm?.configured, h.llm?.configured ? h.llm.model : "未配置"],
     ["Codex", h.codex?.available, h.codex?.available ? "已找到 codex 命令" : "未安装"],
@@ -258,7 +258,9 @@ $("btn-write").addEventListener("click", (e) => busy(e.currentTarget, async () =
     if (!r.ok) return toast(r.error || "解析失败", "err");
     return afterDraft(r);
   }
-  const res = await runJob(`/api/projects/${S.pid}/draft/write`, { engine: S.wEngine, extra_notes: $("extra-notes").value.trim(), perspective: $("w-persp").value, words: +$("w-words").value || 0 }, "write-console");
+  const res = await runJob(`/api/projects/${S.pid}/draft/write`, { engine: S.wEngine, extra_notes: $("extra-notes").value.trim(), perspective: $("w-persp-on").checked ? "shifenxiyin" : "",
+    persp_level: $("w-persp-on").checked ? S.perspLevel : "off", persp_paras: +$("w-persp-paras").value || 2,
+    words: +$("w-words").value || 0, images: +$("w-images").value || 0 }, "write-console");
   if (!res) return toast("写稿失败，看下方日志", "err");
   await afterDraft(res);
 }));
@@ -366,6 +368,10 @@ function renderOutput(p) {
     $("pv-render-link").href = htmlUrl;
   } else { frame.removeAttribute("src"); frame.dataset.src = ""; }
   show("pv-render-link", !!htmlUrl);
+  const single = p?.render?.single_url, sl = $("pv-single-link");
+  sl.hidden = !single; if (single) sl.href = single;
+  const cv = $("pv-cover"), cu = p?.render?.cover_url;
+  cv.hidden = !cu; if (cu) cv.src = cu + "?t=" + encodeURIComponent(p.updated || "");
   $("xhs-count").textContent = cards.length ? `${cards.length}` : "";
   $("pv-cards").innerHTML = cards.length
     ? cards.map((u, i) => `<img src="${esc(u)}?t=${esc(p.updated)}" alt="小红书卡片 ${i + 1}" data-cap="卡片 ${i + 1}/${cards.length}" loading="lazy">`).join("")
@@ -376,6 +382,29 @@ document.querySelector(".tabs").addEventListener("click", (e) => {
   document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === t));
   document.querySelectorAll(".pane").forEach((x) => x.classList.toggle("hidden", x.dataset.pane !== t.dataset.tab));
 });
+
+// ── perspective (十分吸引): off by default, user decides per article ──
+S.perspLevel = "concept";
+function syncPersp() {
+  const on = $("w-persp-on").checked;
+  show("persp-opts", on);
+  show("persp-paras-w", S.perspLevel === "concept");
+}
+$("w-persp-on").addEventListener("change", syncPersp);
+$("persp-level").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.perspLevel = b.dataset.l;
+  $("persp-level").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+  syncPersp();
+});
+function renderPerspState() {
+  const p = (S.health?.perspectives || []).find((x) => x.key === "shifenxiyin");
+  const st = $("persp-state"); if (!st) return;
+  if (!p?.installed) { st.textContent = "· 未找到框架包（perspectives/）"; $("w-persp-on").disabled = true; return; }
+  $("w-persp-on").disabled = false;
+  st.textContent = p.macro_key ? "· 宏观数据已接入" : "· 宏观数据未配置（设置里填 ATTRACTOR_API_KEY，可选）";
+}
+syncPersp();
 
 // ── editor ──
 $("btn-edit").addEventListener("click", () => {
@@ -390,6 +419,19 @@ $("ed-seg").addEventListener("click", (e) => {
   $("ed-text").value = S.project.draft[S.edField] || "";
 });
 $("ed-cancel").addEventListener("click", () => $("editor").close());
+$("ed-explain").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  const ta = $("ed-text"), sel = ta.value.slice(ta.selectionStart, ta.selectionEnd).trim();
+  const term = ($("ed-term").value.trim() || sel).slice(0, 60);
+  if (!term) return toast("先输入或选中一个概念", "err");
+  const pos = ta.selectionEnd || ta.value.length;
+  const r = await api("/api/perspective/explain", "POST",
+    { perspective: "shifenxiyin", term, context: ta.value.slice(Math.max(0, pos - 600), pos) }, { timeout: 150000 });
+  if (!r.ok) return toast(r.error || "生成失败", "err");
+  const lineEnd = ta.value.indexOf("\n", pos), at = lineEnd < 0 ? ta.value.length : lineEnd;
+  ta.value = ta.value.slice(0, at) + "\n\n" + r.text.trim() + "\n" + ta.value.slice(at);
+  ta.focus(); ta.setSelectionRange(at + 2, at + 2 + r.text.trim().length);
+  toast("已插入，确认后点「保存并重新排版」", "ok");
+}));
 $("ed-save").addEventListener("click", (e) => busy(e.currentTarget, async () => {
   S.project.draft[S.edField] = $("ed-text").value;
   const { wechat_md, xhs_md } = S.project.draft;

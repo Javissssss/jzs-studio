@@ -100,6 +100,9 @@ def _public(s):
         render_info["html_url"] = f"/output/{pid}/" + os.path.basename(
             render_info["html_path"]
         )
+        single = render.single_file_path(render_info["html_path"])
+        if os.path.isfile(single):
+            render_info["single_url"] = f"/output/{pid}/" + os.path.basename(single)
     pub["render"] = render_info
     media_info = s.get("media", {})
     if isinstance(media_info, dict) and media_info.get("manifest"):
@@ -188,6 +191,10 @@ def _apply_ai_output(pid, s, ai_output, overrides=None):
     wechat_md, report = enrich.ensure_placeholders(
         o.get("wechat_md") or parsed["wechat_md"], s.get("topic", {}).get("title", ""), figures, charts
     )
+    target = int(s.get("image_target") or 0)
+    if target:
+        wechat_md, extra = enrich.top_up(wechat_md, target, s.get("topic", {}).get("title", ""))
+        report["mood"] = report.get("mood", 0) + extra
     s["draft"] = {
         "wechat_md": wechat_md,
         "xhs_md": o.get("xhs_md") or parsed["xhs_md"],
@@ -227,15 +234,18 @@ CODEX_WRITE_TAIL = """
 """
 
 
-def _writer(pid, engine, extra_notes, perspective="", words=0):
+def _writer(pid, engine, extra_notes, perspective="", words=0, opts=None):
     """Return fn(logf) that writes the full draft with the chosen engine."""
 
     def fn(logf):
         s = _load_or_404(pid)
         topic = s.get("topic") or {}
-        brief_md = brief.generate_brief(topic, extra_notes=extra_notes, perspective=perspective, words=words)
-        if perspective:
-            logf("已嵌入写作视角：" + perspective)
+        opts_ = opts or {}
+        brief_md = brief.generate_brief(topic, extra_notes=extra_notes, perspective=perspective, words=words,
+                                        persp_level=opts_.get("level", "concept"), persp_paras=opts_.get("paras", 2),
+                                        n_images=opts_.get("images", 0))
+        if perspective and opts_.get("level") != "off":
+            logf(f"已嵌入写作视角：{perspective}（{'全文' if opts_.get('level') == 'full' else '只用于概念解释，最多 %s 处' % opts_.get('paras', 2)}）")
         with open(os.path.join(config.project_dir(pid), "brief.md"), "w", encoding="utf-8") as f:
             f.write(brief_md)
         logf(f"简报已生成（{len(brief_md)} 字）")
@@ -286,8 +296,31 @@ def api_draft_write(pid):
         return jsonify({"ok": False, "error": "未配置写作模型：点右上角「设置」填写 Base URL / API Key / 模型"}), 502
     if engine == "codex" and not codex.find_cmd():
         return jsonify({"ok": False, "error": "没找到 codex 命令：npm i -g @openai/codex 后 codex login，或在设置里填 Codex 命令"}), 502
+    level = b.get("persp_level") or "concept"
+    if level not in perspective.LEVELS:
+        return jsonify({"ok": False, "error": "persp_level 只能是 off / concept / full"}), 400
+    opts = {"level": level, "paras": int(b.get("persp_paras") or 2), "images": int(b.get("images") or 0)}
+    s0 = state.load(pid)
+    if s0 is not None:
+        s0["image_target"] = opts["images"]
+        state.save(pid, s0)
     return _start_job("write", pid, _writer(pid, engine, b.get("extra_notes", ""),
-                                            b.get("perspective", ""), int(b.get("words") or 0)))
+                                            b.get("perspective", ""), int(b.get("words") or 0), opts))
+
+
+@app.route("/api/perspective/explain", methods=["POST"])
+def api_persp_explain():
+    """Paragraph tool: explain one concept with a perspective. Returns text only."""
+    b = _body()
+    term = (b.get("term") or "").strip()
+    if not term or len(term) > 60:
+        return jsonify({"ok": False, "error": "请选中或输入要解释的概念（60 字内）"}), 400
+    try:
+        prompt = perspective.concept_prompt(b.get("perspective") or "shifenxiyin", term, b.get("context") or "")
+        text = llm.chat(prompt, system="你是一位擅长把复杂概念讲给普通人的财经作者。")
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 502
+    return jsonify({"ok": True, "text": text})
 
 
 @app.route("/api/jobs/<jid>", methods=["GET"])
@@ -458,6 +491,15 @@ def _do_render(pid, s):
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(d["wechat_md"])
     s["render"] = {"html_path": path, "md_path": md_path, "meta": meta}
+    # cover (2.35:1) from the first atmosphere photo, visible before publishing
+    try:
+        src = next((m.get("file") for m in manifest if m.get("type") == "MOOD" and m.get("ok") and m.get("file")), None)
+        out_dir = os.path.dirname(path)
+        wechat_mp.make_cover(src, (s.get("topic") or {}).get("title") or meta.get("title", ""),
+                             os.path.join(out_dir, "wx_cover.jpg"), brand=config.brand())
+        s["render"]["cover_url"] = f"/output/{pid}/wx_cover.jpg"
+    except Exception:  # noqa: BLE001  cover is a nice-to-have
+        pass
     s["stage"] = "review"
     state.log(s, f"rendered: {meta.get('word_count', 0)} chars, {meta.get('sections', 0)} sections")
     state.save(pid, s)

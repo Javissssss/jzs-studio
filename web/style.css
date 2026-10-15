@@ -256,3 +256,11 @@ details pre { max-height: 240px; overflow: auto; background: var(--surface-2); p
   .health { display: none; } .work { padding: 20px 16px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* perspective switch */
+.persp-box{margin:10px 0 8px;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.persp-box .switch{display:inline-flex;align-items:center;gap:6px;font-weight:600;cursor:pointer}
+.persp-box .switch input{width:16px;height:16px;accent-color:var(--accent)}
+.persp-opts{flex-basis:100%;gap:12px;align-items:center}
+.ed-tools{margin:0 0 8px;gap:8px}
+.pv-cover{width:100%;max-width:360px;aspect-ratio:2.35/1;object-fit:cover;border-radius:8px;margin:10px auto 4px;display:block;box-shadow:0 2px 8px rgba(0,0,0,.12)}

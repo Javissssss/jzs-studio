@@ -258,9 +258,9 @@ def make_cover(bg_path, title, out_path, brand=""):
     if bg_path and os.path.exists(bg_path):
         im = Image.open(bg_path).convert("RGB")
         r = max(W / im.width, H / im.height)
-        im = im.resize((int(im.width * r) + 1, int(im.height * r) + 1))
+        im = im.resize((int(im.width * r) + 1, int(im.height * r) + 1), Image.LANCZOS)
         l, t = (im.width - W) // 2, (im.height - H) // 2
-        im = im.crop((l, t, l + W, t + H)).filter(ImageFilter.GaussianBlur(1.2))
+        im = im.crop((l, t, l + W, t + H))
     else:
         im = Image.new("RGB", (W, H), "#2b2b2b")
     shade = Image.new("L", (W, 1))
@@ -297,7 +297,7 @@ def make_cover(bg_path, title, out_path, brand=""):
     for ln in lines:
         dr.text((110, y), ln, font=f_t, fill="#ffffff")
         y += 128
-    im.save(out_path, "JPEG", quality=90)
+    im.save(out_path, "JPEG", quality=92, optimize=True)
     return out_path
 
 

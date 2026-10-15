@@ -14,10 +14,7 @@ command -v $PY >/dev/null 2>&1 || { echo "[错误] 未找到 Python 3.10+"; exit
 echo "[1/4] Python: $($PY --version)"
 
 echo "[2/4] 检查依赖..."
-$PY -c "import flask, playwright" >/dev/null 2>&1 || {
-  echo "       安装依赖中..."
-  $PY -m pip install -r requirements.txt
-}
+$PY -m pip install -q -r requirements.txt
 
 echo "[3/4] 检查浏览器内核..."
 $PY -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()" >/dev/null 2>&1 || {

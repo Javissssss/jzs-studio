@@ -17,7 +17,7 @@ from . import config
 
 SYSTEM_TPL = (
     "你是「{brand}」公众号的主笔。严格按用户简报的文风、结构和「输出格式」写作，"
-    "必须输出全部标记块（===WECHAT_START=== 等），公众号正文写满 2500 字以上；"
+    "必须输出全部标记块（===WECHAT_START=== 等），公众号正文字数按简报要求；"
     "不要自己写「目录」和「约N字读完N分钟」，排版器会自动生成；"
     "不要输出与稿件无关的解释。"
 )
@@ -76,3 +76,28 @@ def write_draft(brief_md, timeout=300):
     if not (text or "").strip():
         raise RuntimeError("模型返回了空内容")
     return text
+
+
+def chat(prompt, system="", timeout=120, max_tokens=1200, temperature=0.6):
+    """Single short completion (paragraph tools). Raises RuntimeError."""
+    s = settings()
+    if not is_configured():
+        raise RuntimeError("未配置写作模型：点右上角「设置」填写")
+    msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    req = urllib.request.Request(
+        s["base_url"] + "/chat/completions",
+        data=json.dumps({"model": s["model"], "messages": msgs, "temperature": temperature,
+                         "max_tokens": max_tokens}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + s["api_key"]},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return (data["choices"][0]["message"]["content"] or "").strip()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"模型接口返回 {e.code}：{e.read().decode('utf-8', 'replace')[:200]}") from None
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise RuntimeError(f"连不上模型接口：{e}") from None
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise RuntimeError("模型返回格式无法识别") from None

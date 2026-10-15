@@ -372,11 +372,58 @@ def _clean_heading(h):
     return h.strip()
 
 
+def inline_images(html_str, base_dir, max_w=1280):
+    """Embed every relative <img src> as a data URI so the file opens anywhere
+    (sent over IM, opened on another computer). Big photos are downscaled to
+    max_w and re-encoded as JPEG to keep the file small."""
+    import base64
+    import io
+    import mimetypes
+
+    def repl(m):
+        src = m.group(2)
+        if src.startswith(("data:", "http://", "https://", "//")):
+            return m.group(0)
+        path = os.path.join(base_dir, src.split("?")[0])
+        if not os.path.isfile(path):
+            return m.group(0)
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        with open(path, "rb") as fh:
+            data = fh.read()
+        try:
+            from PIL import Image
+
+            im = Image.open(io.BytesIO(data))
+            if im.width > max_w:
+                im = im.resize((max_w, round(im.height * max_w / im.width)), Image.LANCZOS)
+                buf = io.BytesIO()
+                if mime == "image/png" and im.mode in ("RGBA", "LA", "P"):
+                    im.save(buf, "PNG", optimize=True)
+                else:
+                    im.convert("RGB").save(buf, "JPEG", quality=88, optimize=True)
+                    mime = "image/jpeg"
+                data = buf.getvalue()
+        except Exception:
+            pass
+        return f'{m.group(1)}data:{mime};base64,{base64.b64encode(data).decode()}{m.group(3)}'
+
+    return re.sub(r'(<img\b[^>]*?\bsrc=")([^"]+)(")', repl, html_str)
+
+
 def save_html(pid, html_str, title="article"):
+    """Write two files: the working copy (relative image paths, used by the
+    workbench preview and copy-to-WeChat) and a self-contained single file
+    for sharing / opening on any computer."""
     out_dir = os.path.join(config.project_dir(pid), "output")
     os.makedirs(out_dir, exist_ok=True)
     safe = re.sub(r"[^\w\u4e00-\u9fff-]", "", title)[:30] or "article"
     path = os.path.join(out_dir, f"公众号_{safe}_终版.html")
     with open(path, "w", encoding="utf-8") as f:
         f.write(html_str)
+    with open(single_file_path(path), "w", encoding="utf-8") as f:
+        f.write(inline_images(html_str, out_dir))
     return path
+
+
+def single_file_path(html_path):
+    return html_path[: -len(".html")] + "_单文件.html"

@@ -73,22 +73,61 @@ class WechatBodyTest(unittest.TestCase):
 
 
 class PerspectiveTest(unittest.TestCase):
-    def test_missing_skill_is_empty(self):
-        with mock.patch.object(perspective, "find_skill", return_value=None):
-            self.assertEqual(perspective.brief_block("shifenxiyin", "美联储"), "")
+    def test_bundled_pack_found_without_local_install(self):
+        with mock.patch.object(perspective, "_external_roots", return_value=iter(())):
+            d = perspective.find_skill("shifenxiyin")
+        self.assertTrue(d and os.path.abspath(d).startswith(os.path.abspath(perspective.BUNDLED_ROOT)))
 
-    def test_block_from_local_skill(self):
+    def test_off_is_empty(self):
+        self.assertEqual(perspective.brief_block("shifenxiyin", "美联储", level="off"), "")
+        self.assertEqual(perspective.brief_block("", "美联储"), "")
+
+    def test_concept_level_is_scoped(self):
+        with mock.patch.object(perspective, "macro_snapshot", return_value=""):
+            b = perspective.brief_block("shifenxiyin", "美联储", level="concept", max_paras=3)
+            f = perspective.brief_block("shifenxiyin", "美联储", level="full")
+        self.assertIn("只用于解释概念", b)
+        self.assertIn("最多 3 处", b)
+        self.assertIn("全文使用", f)
+        self.assertLess(len(b), len(f))
+
+    def test_concept_prompt(self):
+        p = perspective.concept_prompt("shifenxiyin", "美债收益率")
+        self.assertIn("美债收益率", p)
+
+
+class MindmapBriefTest(unittest.TestCase):
+    def test_brief_prefers_mindmap(self):
+        from core import brief
+
+        b = brief.generate_brief({"title": "美联储加息"}, n_images=5)
+        self.assertIn("mindmap", b)
+        self.assertIn("正好 5 张图", b)
+        self.assertNotIn("写作视角", b)
+
+
+class TopUpTest(unittest.TestCase):
+    def test_top_up_to_target(self):
+        from core import enrich
+
+        md = "## 一\n" + "字" * 300 + "\n[FIGURE:f1] x\n## 二\n" + "字" * 500 + "\n## 三\n" + "字" * 100
+        out, n = enrich.top_up(md, 3)
+        self.assertEqual(n, 2)
+        self.assertEqual(len(enrich.PH_RE.findall(out)), 3)
+        self.assertEqual(enrich.top_up(out, 3)[1], 0)
+
+
+class InlineImagesTest(unittest.TestCase):
+    def test_single_file_embeds_images(self):
+        from PIL import Image
+
+        from core import render
+
         d = tempfile.mkdtemp()
-        sk = os.path.join(d, "shifenxiyin-perspective")
-        os.makedirs(sk)
-        with open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8") as f:
-            f.write("---\nversion: 999.0\n---\n## 核心心智模型\n钱货双流量\n## 无关\nxx\n")
-        with mock.patch.dict(os.environ, {"JZS_PERSPECTIVE_DIR": d}):
-            self.assertTrue(perspective.find_skill("shifenxiyin"))
-            b = perspective.brief_block("shifenxiyin", "无宏观")
-        self.assertIn("钱货双流量", b)
-        self.assertNotIn("xx", b)
-        self.assertNotIn("宏观数据核查", b)
+        Image.new("RGB", (2000, 1000), "red").save(os.path.join(d, "a.jpg"))
+        out = render.inline_images('<p><img src="a.jpg" style="x"></p><img src="https://x/y.png">', d)
+        self.assertIn("data:image/jpeg;base64,", out)
+        self.assertIn('src="https://x/y.png"', out)
 
 
 if __name__ == "__main__":

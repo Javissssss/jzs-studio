@@ -23,13 +23,9 @@ echo [1/4] Python:
 %PY% --version
 
 REM --- deps ---
-echo [2/4] 检查依赖 (flask, playwright)...
-%PY% -c "import flask, playwright" >nul 2>nul
-if errorlevel 1 (
-  echo        安装依赖中...
-  %PY% -m pip install -r requirements.txt
-  if errorlevel 1 ( echo [错误] 依赖安装失败 & pause & exit /b 1 )
-)
+echo [2/4] 检查依赖 (requirements.txt)...
+%PY% -m pip install -q -r requirements.txt
+if errorlevel 1 ( echo [错误] 依赖安装失败，检查网络或 pip 源 & pause & exit /b 1 )
 
 REM --- playwright chromium ---
 echo [3/4] 检查浏览器内核 (playwright chromium)...
@@ -40,9 +36,9 @@ if errorlevel 1 (
 )
 
 REM --- env hint ---
-if not defined PEXELS_API_KEY (
-  echo [提示] 未设置 PEXELS_API_KEY，氛围配图将不可用（框架图/数据图不受影响）
-  echo        设置方法: setx PEXELS_API_KEY "你的key"  然后重开终端
+if not exist ".env" (
+  echo [提示] 首次使用：打开页面右上角「设置」填写写作模型 / Pexels / 公众号等配置
+  echo        配置保存在本目录 .env，换电脑时把 .env 一起拷过去即可
 )
 
 REM --- start ---

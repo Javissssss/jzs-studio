@@ -56,8 +56,8 @@ def _run_script(script_name, args, timeout=180):
 def gen_figure(fig, out_dir, idx):
     """Render one framework figure. fig={id,kind,caption,data}."""
     kind = fig.get("kind", "flow")
-    if kind not in ("flow", "compare", "checklist", "timeline"):
-        kind = "flow"
+    if kind not in ("flow", "compare", "checklist", "timeline", "mindmap"):
+        kind = "mindmap" if fig.get("data", {}).get("branches") else "flow"
     data = fig.get("data") or {}
     if not data.get("title"):
         data["title"] = fig.get("caption", "")[:20] or "要点"

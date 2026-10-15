@@ -137,7 +137,7 @@ def plan_images(topic_title, topic_summary=""):
     return plan
 
 
-def generate_brief(topic, extra_notes="", perspective="", words=0):
+def generate_brief(topic, extra_notes="", perspective="", words=0, persp_level="concept", persp_paras=2, n_images=0):
     """Generate the unified dual-platform creative brief (markdown string)."""
     title = topic.get("title", "")
     summary = topic.get("summary", "")
@@ -198,13 +198,17 @@ def generate_brief(topic, extra_notes="", perspective="", words=0):
 ### 配图规划（⚠️ 占位符是强制要求，不写会导致配图全部跳过）
 {img_table}
 **占位符写法**（每张图单独占一行，格式严格，不能省略）：
-- 框架图（必须写）：`[FIGURE:f1] 图说文字`（f1/f2… 编号与下方 FIGURES 块 id 对应；kind 取 flow/compare/checklist/timeline）
+- 知识框架图（必须写 1 张）：`[FIGURE:f1] 图说文字`（f1/f2… 编号与下方 FIGURES 块 id 对应；**首选 kind=mindmap 逻辑脑图**，其它 kind 只在确实是纯流程/对比/时间线时用）
 - 氛围图（每篇至少1张）：`[MOOD:英文搜索词] 图说文字`（搜索词用英文具象名词，如 `[MOOD:bond market finance]`）
 - 数据图：`[CHART:c1] 图说文字`（c1… 与下方 CHARTS 块 id 对应）
 
 ⚠️ **关键**：正文里每一个 [FIGURE:xxx] / [MOOD:xxx] / [CHART:xxx] 都必须单独占一行，前后空行，不能合并进段落。工作台会据此自动配图，你只需留占位符 + 在末尾提供结构化数据。
 
-### 框架图数据结构（FIGURES 块用，四种 kind 的 JSON schema）
+### 框架图数据结构（FIGURES 块用）
+- **mindmap（逻辑脑图，首选）**：不是目录！要把全文的关键信息组织成「中心结论 → 3-6 个逻辑分支 → 每支 2-4 条带数据的要点」，分支之间体现因果/传导/对立关系：
+  `{{"title":"图标题(≤14字)","subtitle":"一句话背景","root":"中心命题(≤10字)","root_note":"关键数据","takeaway":"一句话结论，可用**加粗**",
+    "branches":[{{"label":"分支名(≤8字)","tag":"起因/链一/链二/误区/行动…","relation":"与中心的关系(≤6字，如：倒逼、传导、对冲)","note":"可选一句","children":["关键词：具体数据或判断", "…"]}}]}}`
+  要求：children 必须是**具体信息**（数字、因果、判断），禁止只写章节名；每条 ≤22 字，用「关键词：说明」格式
 - flow（流程）：`{{"title","subtitle","steps":[{{"label","desc"}}]}}`
 - compare（对比）：`{{"title","subtitle","left":{{"name","items":[str]}},"right":{{"name","items":[str]}}}}`
 - checklist（清单）：`{{"title","subtitle","items":[{{"text","note"}}]}}`
@@ -239,7 +243,7 @@ def generate_brief(topic, extra_notes="", perspective="", words=0):
 
 {M_FIGURES[0]}
 [
-  {{"id":"f1","kind":"flow","caption":"图说文字","data":{{"title":"...","subtitle":"...","steps":[{{"label":"...","desc":"..."}}]}}}}
+  {{"id":"f1","kind":"mindmap","caption":"图说文字","data":{{"title":"...","subtitle":"...","root":"...","root_note":"...","takeaway":"...","branches":[{{"label":"...","tag":"...","relation":"...","children":["关键词：数据/判断"]}}]}}}}
 ]
 {M_FIGURES[1]}
 
@@ -253,10 +257,13 @@ def generate_brief(topic, extra_notes="", perspective="", words=0):
 """
     if extra_notes:
         brief += f"\n## 七、额外要求（用户补充）\n\n{extra_notes}\n"
-    if perspective:
+    if n_images:
+        brief += (f"\n## 配图数量（用户指定）\n\n全文正好 {int(n_images)} 张图：1 张 [FIGURE] 知识脑图，"
+                  f"至少 1 张 [MOOD] 氛围图（第一张氛围图会被用作封面），其余按内容选 [CHART] 或 [MOOD]。\n")
+    if perspective and persp_level != "off":
         from . import perspective as _pv
 
-        brief += _pv.brief_block(perspective, f"{title} {summary} {angle}")
+        brief += _pv.brief_block(perspective, f"{title} {summary} {angle}", level=persp_level, max_paras=persp_paras)
     return brief
 
 

@@ -1,11 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Writing perspectives ("视角"): plug an external thinking-framework skill into
-the brief, e.g. 《十分吸引》 shifenxiyin-perspective.
+"""Writing perspectives ("视角"): optional thinking-framework packs, e.g.
+《十分吸引》 shifenxiyin-perspective.
 
-The skill itself is NOT vendored into this repo (its corpus/wording belongs to
-the show). We load it at runtime from the local Hermes skills dir, or from
-JZS_PERSPECTIVE_DIR. Only a few sections of SKILL.md are injected, plus a fresh
-macro snapshot from the skill's own `macro_latest.py` when the topic is macro.
+Off by default. The user decides per article whether to use it and how much:
+
+  level "off"      not used
+  level "concept"  only when the article explains a concept/mechanism: use the
+                   framework for those paragraphs (at most N), rest of the
+                   article keeps the channel's own voice   <- recommended
+  level "full"     whole article written through the framework
+
+Plus a paragraph-level tool: explain_concept(term) rewrites ONE concept
+explanation with the framework, which the editor inserts where the cursor is.
+
+Portability: the framework pack is bundled at <repo>/perspectives/<key>/ so a
+fresh clone on another computer works. A locally installed newer copy (Hermes
+skills dir, or JZS_PERSPECTIVE_DIR) wins if present. The macro-data key is read
+from env ATTRACTOR_API_KEY (settings page) — never committed.
 """
 
 import os
@@ -13,14 +24,20 @@ import re
 import subprocess
 import sys
 
+from . import config
+
 PERSPECTIVES = {
     "shifenxiyin": {
         "name": "十分吸引",
         "slug": "shifenxiyin-perspective",
-        "sections": ["输出规范", "核心心智模型", "决策启发式", "表达风格"],
+        "dir": "shifenxiyin",
+        "concept_sections": ["核心心智模型", "表达风格"],
+        "full_sections": ["输出规范", "核心心智模型", "决策启发式", "表达风格"],
         "macro_script": "macro_latest.py",
     },
 }
+LEVELS = ("off", "concept", "full")
+BUNDLED_ROOT = os.path.join(config.PRODUCT_ROOT, "perspectives")
 
 # topic keywords -> macro indicators to pull (names understood by macro_latest.py)
 MACRO_RULES = [
@@ -35,7 +52,17 @@ MACRO_RULES = [
 ]
 
 
-def _skill_roots():
+def _ver(md_path):
+    try:
+        with open(md_path, encoding="utf-8") as f:
+            head = f.read(800)
+    except OSError:
+        return None
+    m = re.search(r"^version:\s*([\d.]+)", head, re.M)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else (0,)
+
+
+def _external_roots():
     env = os.environ.get("JZS_PERSPECTIVE_DIR")
     if env:
         yield env
@@ -63,31 +90,34 @@ def _walk_find(root, slug, max_depth=6):
 
 
 def find_skill(key):
-    """Return the directory of the newest installed copy of the perspective skill."""
+    """Directory of the pack: bundled copy, or a newer local install."""
     p = PERSPECTIVES.get(key)
     if not p:
         return None
-    best, best_ver = None, ()
-    for root in _skill_roots():
+    best, best_ver = None, None
+    bundled = os.path.join(BUNDLED_ROOT, p["dir"], "SKILL.md")
+    if os.path.isfile(bundled):
+        best, best_ver = os.path.dirname(bundled), _ver(bundled) or (0,)
+    for root in _external_roots():
         if os.path.isfile(os.path.join(root, "SKILL.md")) and p["slug"] in root:
             cands = [os.path.join(root, "SKILL.md")]
         else:
             cands = _walk_find(root, p["slug"])
         for md in cands:
-            try:
-                with open(md, encoding="utf-8") as f:
-                    head = f.read(600)
-            except OSError:
-                continue
-            m = re.search(r"^version:\s*([\d.]+)", head, re.M)
-            ver = tuple(int(x) for x in m.group(1).split(".")) if m else (0,)
-            if ver > best_ver:
-                best, best_ver = os.path.dirname(md), ver
+            v = _ver(md)
+            if v is not None and (best_ver is None or v > best_ver):
+                best, best_ver = os.path.dirname(md), v
     return best
 
 
 def available():
-    return [{"key": k, "name": v["name"], "installed": bool(find_skill(k))} for k, v in PERSPECTIVES.items()]
+    out = []
+    for k, v in PERSPECTIVES.items():
+        d = find_skill(k)
+        out.append({"key": k, "name": v["name"], "installed": bool(d),
+                    "bundled": bool(d) and os.path.abspath(d).startswith(os.path.abspath(BUNDLED_ROOT)),
+                    "macro_key": bool(os.environ.get("ATTRACTOR_API_KEY"))})
+    return out
 
 
 def _sections(md, names):
@@ -100,7 +130,7 @@ def _sections(md, names):
 
 
 def macro_snapshot(skill_dir, topic_text, script="macro_latest.py", timeout=60):
-    """Run the skill's own macro tool. Returns text, or '' if unavailable."""
+    """Run the pack's own macro tool. Returns text, or '' if unavailable."""
     names = []
     for pat, ind in MACRO_RULES:
         if re.search(pat, topic_text or "", re.I):
@@ -110,32 +140,69 @@ def macro_snapshot(skill_dir, topic_text, script="macro_latest.py", timeout=60):
         return ""
     try:
         r = subprocess.run([sys.executable, path, *names[:12]], capture_output=True, timeout=timeout,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace", env=os.environ.copy())
     except (OSError, subprocess.TimeoutExpired):
         return ""
     txt = (r.stdout or "").strip()
     return txt if r.returncode == 0 and "tradeDate" in txt else ""
 
 
-def brief_block(key, topic_text=""):
-    """Markdown block to append to the creative brief. '' if not installed."""
+def _load(key, sections):
     p = PERSPECTIVES.get(key)
     d = find_skill(key) if p else None
     if not d:
-        return ""
+        return None, None, ""
     with open(os.path.join(d, "SKILL.md"), encoding="utf-8") as f:
         md = f.read()
-    body = _sections(md, p["sections"])
-    macro = macro_snapshot(d, topic_text, p.get("macro_script", ""))
-    block = (
-        f"\n## 八、写作视角：《{p['name']}》思维框架（必须使用）\n\n"
-        "用下面这套框架的心智模型与表达风格来写，观点代表节目框架而非任何具体嘉宾；"
-        "先拆机制、再落路标、最后给普通人一句能记住能做的话；不给买卖/仓位/点位指令。\n\n"
-        + body[:9000]
-    )
-    if macro:
+    return p, d, _sections(md, sections)
+
+
+def brief_block(key, topic_text="", level="concept", max_paras=2, macro=True):
+    """Markdown block appended to the creative brief. '' if off / not installed."""
+    if not key or level == "off" or level not in LEVELS:
+        return ""
+    p = PERSPECTIVES.get(key)
+    if not p:
+        return ""
+    p, d, body = _load(key, p["full_sections"] if level == "full" else p["concept_sections"])
+    if not d:
+        return ""
+    if level == "full":
+        head = (
+            f"\n## 八、写作视角：《{p['name']}》思维框架（全文使用）\n\n"
+            "用下面这套框架的心智模型与表达风格来写，观点代表节目框架而非任何具体嘉宾；"
+            "先拆机制、再落路标、最后给普通人一句能记住能做的话；不给买卖/仓位/点位指令。\n\n"
+        )
+        limit = 9000
+    else:
+        n = max(1, min(int(max_paras or 2), 6))
+        head = (
+            f"\n## 八、写作视角：《{p['name']}》——只用于解释概念（最多 {n} 处）\n\n"
+            f"正文整体保持本账号原有文风。**只有**在需要解释一个概念/机制（例如\"为什么加息会让美元走强\"）时，"
+            f"才借用下面的心智模型来讲透它，全文最多 {n} 处，每处 1-2 段；"
+            "其余段落不要套框架、不要堆术语、不要提节目名。不给买卖/仓位/点位指令。\n\n"
+        )
+        limit = 4500
+    block = head + body[:limit]
+    snap = macro_snapshot(d, topic_text, p.get("macro_script", "")) if macro else ""
+    if snap:
         block += (
             "\n\n### 宏观数据核查（框架自带工具实时读数，写作时据此判断，不要编造读数）\n"
-            "读法：value∈[-1,1]，正负=方向，绝对值=置信度；0.5~0.6 是边沿状态。\n\n```\n" + macro + "\n```\n"
+            "读法：value∈[-1,1]，正负=方向，绝对值=置信度；0.5~0.6 是边沿状态。\n\n```\n" + snap + "\n```\n"
         )
     return block
+
+
+def concept_prompt(key, term, context=""):
+    """Prompt for rewriting ONE concept explanation (editor tool)."""
+    p, d, body = _load(key, PERSPECTIVES.get(key, {}).get("concept_sections", []))
+    if not d:
+        raise RuntimeError("没找到该视角包（perspectives/ 目录缺失）")
+    return (
+        f"用《{p['name']}》的思维框架，向普通读者解释这个概念：「{term}」。\n"
+        "要求：1-2 段，共 150-300 字；先一句话讲本质，再用一个生活化比喻讲清机制，"
+        "最后一句点出读者该盯的路标；不用小标题、不用列表、不提节目名、不给投资建议；"
+        "只输出这几段正文。\n\n"
+        + (f"上下文（这段解释要接在这里）：\n{context[:800]}\n\n" if context else "")
+        + "框架参考：\n" + body[:4000]
+    )
