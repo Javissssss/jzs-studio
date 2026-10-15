@@ -255,6 +255,39 @@ def generate_brief(topic, extra_notes=""):
     return brief
 
 
+_TOC_HEAD = re.compile(r"^#{1,3}\s*(目录|目\s*录|contents|toc)\s*$", re.I)
+_READ_TIME = re.compile(r"^\s*[（(]?\s*(全文)?约\s*[\d,，.]+\s*字[，,、\s]*(阅读|读完|预计阅读)[^\n]{0,12}分钟[。.)）]?\s*$")
+
+
+def strip_self_toc(md):
+    """Models often write their own '## 目录' + bullet list + '约N字读完N分钟'.
+    The renderer builds both automatically, so drop them (keep any placeholders
+    like [FIGURE:..] that the model parked inside that section)."""
+    lines = (md or "").splitlines()
+    out, in_toc = [], False
+    for ln in lines:
+        st = ln.strip()
+        if _TOC_HEAD.match(st):
+            in_toc = True
+            continue
+        if in_toc:
+            if st.startswith("## ") or st == "---":
+                in_toc = False
+                if st == "---":
+                    continue
+            elif not st or re.match(r"^([-*+]|\d+[.、)])\s+", st) or _READ_TIME.match(st):
+                continue
+            elif st.startswith("["):  # placeholder: keep
+                out.append(ln)
+                continue
+            else:
+                in_toc = False
+        if _READ_TIME.match(st):
+            continue
+        out.append(ln)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
 def parse_ai_output(text):
     """Parse the AI response back into structured drafts using markers.
     Returns dict with wechat_md, xhs_md, xhs_titles[], xhs_tags[].
@@ -313,6 +346,7 @@ def parse_ai_output(text):
     if not parsed_ok:
         wechat = text.strip()
 
+    wechat = strip_self_toc(wechat)
     return {
         "wechat_md": wechat,
         "xhs_md": xhs,

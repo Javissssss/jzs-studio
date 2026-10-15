@@ -292,6 +292,17 @@ class TestEngines(unittest.TestCase):
         self.assertEqual(res.status_code, 502)
         self.assertIn("codex", res.get_json()["error"])
 
+    def test_strip_self_written_toc(self):
+        md = ("[MOOD:ai] 封面\n\n## 目录\n\n[FIGURE:f1] 流程\n\n- 第一节\n- 第二节\n\n约3500字，读完9分钟。\n\n---\n\n"
+              "正文开头。\n\n## 第一节\n\n内容")
+        out = brief.strip_self_toc(md)
+        self.assertNotIn("目录", out)
+        self.assertNotIn("读完9分钟", out)
+        self.assertNotIn("- 第一节", out)
+        self.assertIn("[FIGURE:f1] 流程", out)
+        self.assertIn("正文开头。", out)
+        self.assertIn("## 第一节", out)
+
     def test_codex_cmd_resolution(self):
         from unittest import mock
         from core import codex
