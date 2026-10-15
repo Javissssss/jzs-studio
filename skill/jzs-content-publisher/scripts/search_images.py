@@ -7,11 +7,13 @@ Engine fallback chain: unsplash -> pexels -> openverse."""
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
 
 UA = {"User-Agent": "jzs-content-publisher/1.0"}
+MIN_W = 1600  # px; photos narrower than this look soft on retina phones
 
 
 def http_get_json(url, headers=None, timeout=30):
@@ -70,15 +72,39 @@ def search_unsplash(query, count, orientation="landscape"):
     return out
 
 
+STOP = {"the", "a", "of", "and", "in", "on", "with", "for", "to", "at", "concept", "abstract"}
+
+
+def _rank_relevant(photos, query):
+    words = [w for w in re.findall(r"[a-z]+", query.lower()) if w not in STOP and len(w) > 2]
+    if not words:
+        return photos
+
+    def hits(r):
+        text = ((r.get("alt") or "") + " " + (r.get("url") or "")).lower()
+        return sum(1 for w in words if w in text or (w.endswith("s") and w[:-1] in text))
+
+    scored = [(hits(r), i, r) for i, r in enumerate(photos)]
+    good = [x for x in scored if x[0] > 0]
+    pool = good or scored  # nothing matched: fall back to raw relevance order
+    pool.sort(key=lambda x: (-x[0], x[1]))
+    return [r for _, _, r in pool]
+
+
 def search_pexels(query, count, orientation="landscape"):
     key = os.environ.get("PEXELS_API_KEY")
     if not key:
         return []
     q = urllib.parse.quote(query)
-    url = f"https://api.pexels.com/v1/search?query={q}&per_page={count}&orientation={orientation}"
+    # over-fetch, then keep only sharp, wide photos (quality gate)
+    url = f"https://api.pexels.com/v1/search?query={q}&per_page={max(count * 6, 12)}&orientation={orientation}&size=large"
     data = http_get_json(url, {"Authorization": key})
+    photos = [r for r in data.get("photos", []) if (r.get("width") or 0) >= MIN_W]
+    # keep Pexels' relevance order, but prefer photos whose alt text / slug
+    # actually mention a query word (filters "crane on a meadow" for "oil pump")
+    photos = _rank_relevant(photos, query)
     out = []
-    for r in data.get("photos", []):
+    for r in photos[:count]:
         src = r.get("src") or {}
         out.append(
             {
@@ -86,7 +112,7 @@ def search_pexels(query, count, orientation="landscape"):
                 "title": r.get("alt") or "",
                 "creator": r.get("photographer") or "",
                 "license": "pexels",
-                "url": src.get("large") or src.get("original") or "",
+                "url": src.get("large2x") or src.get("original") or src.get("large") or "",
                 "detail": r.get("url") or "",
                 "width": r.get("width"),
                 "height": r.get("height"),

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+:root{--fg:#141413;--muted:#6f6d66;--line:#d9cfc0;--accent:#C96442;--accent-d:#A8432F;--card:#fff;
+  --c1:#C96442;--c2:#2F6F8F;--c3:#5B8C51;--c4:#8A5BA8;--c5:#B8862B;--c6:#4E6A8A}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:transparent}
+#figure{width:1200px;position:relative;background:linear-gradient(160deg,#FBFAF6 0%,#F2EDE3 100%);
+  font-family:"Microsoft YaHei","微软雅黑","PingFang SC",sans-serif;padding:44px 36px 32px;color:var(--fg)}
+.hd{text-align:center;margin-bottom:36px}
+.hd .kick{font-size:20px;letter-spacing:.3em;color:var(--accent);font-weight:700;margin-bottom:10px}
+.hd h1{font-size:52px;font-weight:800;line-height:1.3}
+.hd .sub{font-size:26px;color:var(--muted);margin-top:10px}
+.map{display:grid;grid-template-columns:1fr 230px 1fr;column-gap:64px;align-items:center;position:relative}
+.col{display:flex;flex-direction:column;gap:26px;position:relative;z-index:2}
+.root{position:relative;z-index:2;background:var(--accent);color:#fff;border-radius:22px;padding:26px 16px;text-align:center;
+  box-shadow:0 10px 28px rgba(169,67,47,.28)}
+.root .rt{font-size:38px;font-weight:800;line-height:1.35}
+.root .rn{font-size:22px;opacity:.9;margin-top:10px;line-height:1.5}
+.br{background:var(--card);border-radius:16px;border-top:6px solid var(--bc);padding:18px 18px 16px;
+  box-shadow:0 4px 16px rgba(60,40,20,.08)}
+.br .bt{display:flex;align-items:baseline;gap:8px;font-size:32px;font-weight:800;color:var(--bc);line-height:1.3}
+.br .bt .tag{font-size:18px;font-weight:700;color:#fff;background:var(--bc);border-radius:20px;padding:2px 10px;white-space:nowrap}
+.br .bn{font-size:22px;color:var(--muted);margin-top:6px;line-height:1.5}
+.br ul{list-style:none;margin-top:12px;display:flex;flex-direction:column;gap:9px}
+.br li{position:relative;padding-left:20px;font-size:25px;line-height:1.5}
+.br li::before{content:"";position:absolute;left:2px;top:.62em;width:8px;height:8px;border-radius:50%;background:var(--bc)}
+.br li b{color:var(--bc)}
+.br li .k{font-weight:700}
+.br li .v{color:var(--muted)}
+svg.links{position:absolute;inset:0;z-index:1;overflow:visible;pointer-events:none}
+svg.links path{fill:none;stroke-width:4;stroke-linecap:round;opacity:.75}
+.rel{position:absolute;z-index:3;transform:translate(-50%,-50%);background:#FBF8F2;border:2px solid;border-radius:14px;padding:1px 10px;font-size:19px;font-weight:700;white-space:nowrap}
+.takeaway{margin-top:34px;background:#1f1d1a;color:#fff;border-radius:14px;padding:20px 26px;font-size:30px;line-height:1.6;text-align:center}
+.takeaway b{color:#F2B79F}
+.foot{margin-top:20px;font-size:18px;color:var(--muted);text-align:right;font-family:ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+<div id="figure">
+  <div class="hd"><div class="kick">MIND MAP · 逻辑框架</div><h1 id="title"></h1><div class="sub" id="subtitle"></div></div>
+  <div class="map" id="map">
+    <div class="col" id="left"></div>
+    <div class="root" id="root"><div class="rt" id="rt"></div><div class="rn" id="rn"></div></div>
+    <div class="col" id="right"></div>
+    <svg class="links" id="links"></svg>
+  </div>
+  <div class="takeaway" id="takeaway" hidden></div>
+  <div class="foot">__BRAND__ · 知识框架图</div>
+</div>
+<script>
+const D = /*__DATA__*/;
+const COLORS = ["var(--c1)","var(--c2)","var(--c3)","var(--c4)","var(--c5)","var(--c6)"];
+const RAW = ["#C96442","#2F6F8F","#5B8C51","#8A5BA8","#B8862B","#4E6A8A"];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// **x** -> bold accent; "关键词：说明" -> key/value
+const fmt = (s) => {
+  s = esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  const m = s.match(/^([^：:]{1,14})[：:](.+)$/);
+  return m ? `<span class="k">${m[1]}</span>：<span class="v">${m[2]}</span>` : s;
+};
+$("title").textContent = D.title || "";
+$("subtitle").textContent = D.subtitle || "";
+$("rt").textContent = D.root || D.title || "";
+$("rn").textContent = D.root_note || "";
+if (D.takeaway) { const t = $("takeaway"); t.hidden = false; t.innerHTML = fmt(D.takeaway); }
+const brs = (D.branches || []).slice(0, 6);
+const half = Math.ceil(brs.length / 2);
+brs.forEach((b, i) => {
+  const el = document.createElement("div"); el.className = "br"; el.style.setProperty("--bc", COLORS[i % 6]);
+  el.dataset.i = i;
+  const kids = (b.children || []).slice(0, 5).map((c) => {
+    const txt = typeof c === "string" ? c : (c.label || "") + (c.note ? "：" + c.note : "");
+    return `<li>${fmt(txt)}</li>`;
+  }).join("");
+  el.innerHTML = `<div class="bt">${b.tag ? `<span class="tag">${esc(b.tag)}</span>` : ""}<span>${esc(b.label)}</span></div>`
+    + (b.note ? `<div class="bn">${fmt(b.note)}</div>` : "") + (kids ? `<ul>${kids}</ul>` : "");
+  (i < half ? $("right") : $("left")).appendChild(el);
+});
+// connectors: root -> each branch (curved), relation label on the curve
+requestAnimationFrame(() => {
+  const map = $("map").getBoundingClientRect(), r = $("root").getBoundingClientRect(), svg = $("links");
+  svg.setAttribute("width", map.width); svg.setAttribute("height", map.height);
+  let out = ""; const labels = [];
+  document.querySelectorAll(".br").forEach((el) => {
+    const i = +el.dataset.i, b = el.getBoundingClientRect(), right = b.left > r.left;
+    const x1 = (right ? r.right : r.left) - map.left, y1 = r.top + r.height / 2 - map.top;
+    const x2 = (right ? b.left : b.right) - map.left, y2 = b.top + Math.min(40, b.height / 2) - map.top;
+    const mx = (x1 + x2) / 2;
+    out += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" stroke="${RAW[i % 6]}"/>`;
+    out += `<circle cx="${x2}" cy="${y2}" r="7" fill="${RAW[i % 6]}"/>`;
+    const rel = brs[i].relation;
+    if (rel) labels.push({x: mx, y: (y1 + y2) / 2, t: String(rel).slice(0, 5), c: RAW[i % 6]});
+  });
+  svg.innerHTML = out;
+  // relation labels: HTML chips above the cards, centred on the curve midpoint, nudged apart if they collide
+  labels.sort((a, b) => a.y - b.y);
+  for (let k = 1; k < labels.length; k++) {
+    const p = labels[k - 1], q = labels[k];
+    if (Math.abs(p.x - q.x) < 60 && q.y - p.y < 34) q.y = p.y + 34;
+  }
+  labels.forEach((l) => {
+    const d = document.createElement("div"); d.className = "rel"; d.textContent = l.t;
+    d.style.cssText = `left:${l.x}px;top:${l.y}px;color:${l.c};border-color:${l.c}`;
+    $("map").appendChild(d);
+  });
+  document.body.dataset.ready = "1";
+});
+</script>
+</body>
+</html>

@@ -7,6 +7,8 @@ Data JSON schemas:
   compare:  {"title":str,"subtitle":str,"left":{"name":str,"items":[str]},"right":{...}}
   checklist:{"title":str,"subtitle":str,"items":[{"text":str,"note":str}]}
   timeline: {"title":str,"subtitle":str,"events":[{"date":str,"text":str}]}
+  mindmap:  {"title","subtitle","root","root_note","takeaway",
+             "branches":[{"label","tag","note","relation","children":[str|{"label","note"}]}]}
 Usage: python figure_cards.py --kind flow --data data.json --out fig.png [--width 1080]
 """
 
@@ -23,13 +25,13 @@ TPL_DIR = os.path.join(HERE, "..", "templates", "figure")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "--kind", required=True, choices=["flow", "compare", "checklist", "timeline"]
+        "--kind", required=True, choices=["flow", "compare", "checklist", "timeline", "mindmap"]
     )
     ap.add_argument(
         "--data", required=True, help="JSON file path or inline JSON string"
     )
     ap.add_argument("--out", required=True, help="output PNG path")
-    ap.add_argument("--width", type=int, default=1080)
+    ap.add_argument("--width", type=int, default=0, help="viewport width (default: per template)")
     ap.add_argument("--scale", type=int, default=2)
     args = ap.parse_args()
 
@@ -47,8 +49,11 @@ def main():
         data = json.loads(args.data)
 
     html = tpl.replace("/*__DATA__*/", json.dumps(data, ensure_ascii=False))
+    html = html.replace("__BRAND__", os.environ.get("JZS_BRAND") or "一稿")
 
-    tmp = os.path.join(tempfile.gettempdir(), f"jzs_fig_{args.kind}.html")
+    width = args.width or (1200 if args.kind == "mindmap" else 1080)
+    fd, tmp = tempfile.mkstemp(suffix=".html", prefix=f"jzs_fig_{args.kind}_")
+    os.close(fd)
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(html)
 
@@ -66,11 +71,13 @@ def main():
     with sync_playwright() as p:
         b = p.chromium.launch()
         pg = b.new_page(
-            viewport={"width": args.width, "height": 800},
+            viewport={"width": width, "height": 900},
             device_scale_factor=args.scale,
         )
         pg.goto(url)
         pg.wait_for_load_state("networkidle")
+        if args.kind == "mindmap":
+            pg.wait_for_selector("body[data-ready='1']", timeout=10000)
         el = pg.query_selector("#figure")
         if not el:
             print("[error] #figure element not found in template", file=sys.stderr)
@@ -78,6 +85,10 @@ def main():
             return 1
         el.screenshot(path=args.out)
         b.close()
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
     print(f"[ok] {args.out}")
     return 0
 

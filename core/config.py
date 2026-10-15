@@ -8,6 +8,24 @@ import sys
 CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 PRODUCT_ROOT = os.path.dirname(CORE_DIR)
 
+
+def _load_dotenv(path):
+    """Minimal .env loader (KEY=VALUE lines). Real env vars win."""
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            v = v.strip().strip('"').strip("'")
+            if k.strip() and v and k.strip() not in os.environ:
+                os.environ[k.strip()] = v
+
+
+_load_dotenv(os.path.join(PRODUCT_ROOT, ".env"))
+
 # Embedded skill package (single source of truth for scripts/templates/references)
 SKILL_DIR = os.path.join(PRODUCT_ROOT, "skill", "jzs-content-publisher")
 SCRIPTS_DIR = os.path.join(SKILL_DIR, "scripts")
@@ -16,13 +34,26 @@ REFERENCES_DIR = os.path.join(SKILL_DIR, "references")
 FIGURE_TPL_DIR = os.path.join(TEMPLATES_DIR, "figure")
 
 # Runtime workspace (per-project state + outputs)
-WORKSPACE_DIR = os.path.join(PRODUCT_ROOT, "workspace")
+# override with JZS_WORKSPACE to keep drafts outside the repo
+WORKSPACE_DIR = os.environ.get("JZS_WORKSPACE") or os.path.join(PRODUCT_ROOT, "workspace")
 
 # Web static dir
 WEB_DIR = os.path.join(PRODUCT_ROOT, "web")
 
 # Python executable for subprocess calls to skill scripts
 PYTHON = sys.executable or "python"
+
+# Product name (the tool itself) and default column/brand name printed on
+# articles, cards and figures. Brand is user-configurable (JZS_BRAND).
+PRODUCT_NAME = "一稿"
+PRODUCT_TAGLINE = "一次创作 · 双平台分发"
+DEFAULT_BRAND = "一稿"
+FONT_STACK = '"Microsoft YaHei","微软雅黑","PingFang SC","Hiragino Sans GB",sans-serif'
+
+
+def brand():
+    return (os.environ.get("JZS_BRAND") or "").strip() or DEFAULT_BRAND
+
 
 # Design tokens (brick-red / rice-white) - shared with templates
 TOKENS = {
@@ -56,6 +87,19 @@ STAGE_LABELS = {
     "publish": "存草稿",
     "done": "完成归档",
 }
+
+# Finance topics must carry a disclaimer (brief + rendered footer share this)
+FINANCE_KEYWORDS = (
+    "美联储", "利率", "汇率", "黄金", "国债", "收益率", "通胀", "股", "基金",
+    "楼市", "房价", "降息", "加息", "财经", "经济", "投资", "理财",
+)
+FINANCE_DISCLAIMER = "行情为已发生的客观描述，不构成任何买卖推荐。"
+
+
+def is_finance(text):
+    t = (text or "").lower()
+    return any(k in t for k in FINANCE_KEYWORDS)
+
 
 # Human checkpoints (must wait for user)
 CHECKPOINTS = {"topic", "review"}

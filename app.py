@@ -1,20 +1,32 @@
 # -*- coding: utf-8 -*-
-"""jzs-studio Flask server. Orchestrates the 8-stage dual-platform pipeline.
+"""一稿 (jzs-studio) Flask server: topic -> draft -> images -> layout -> publish.
 Run: python app.py  (then open http://127.0.0.1:8770)"""
 
+import json
 import os
 import re
+import time
 import traceback
 
 from flask import Flask, jsonify, request, send_from_directory, abort
+from werkzeug.exceptions import HTTPException
 
-from core import config, state, topics, brief, media, render, cards, publish
+from core import config, state, topics, brief, enrich, llm, media, render, cards, publish
+from core import codex, imagegen, jobs, perspective, wechat_mp, settings as app_settings
 
 app = Flask(__name__, static_folder=None)
 config.ensure_dirs()
 
 
 # ---------- helpers ----------
+@app.errorhandler(HTTPException)
+def _json_error(e):
+    """API errors as JSON so the UI can show a readable toast."""
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": e.description}), e.code
+    return e
+
+
 def _load_or_404(pid):
     s = state.load(pid)
     if s is None:
@@ -88,6 +100,9 @@ def _public(s):
         render_info["html_url"] = f"/output/{pid}/" + os.path.basename(
             render_info["html_path"]
         )
+        single = render.single_file_path(render_info["html_path"])
+        if os.path.isfile(single):
+            render_info["single_url"] = f"/output/{pid}/" + os.path.basename(single)
     pub["render"] = render_info
     media_info = s.get("media", {})
     if isinstance(media_info, dict) and media_info.get("manifest"):
@@ -167,145 +182,153 @@ def api_brief_generate(pid):
 
 
 # ---------- stage 3: draft fill ----------
+def _apply_ai_output(pid, s, ai_output, overrides=None):
+    """Parse an AI reply into the project draft (+ auto image placeholders)."""
+    o = overrides or {}
+    parsed = brief.parse_ai_output(ai_output)
+    figures = parsed.get("figures", [])
+    charts = parsed.get("charts", [])
+    wechat_md, report = enrich.ensure_placeholders(
+        o.get("wechat_md") or parsed["wechat_md"], s.get("topic", {}).get("title", ""), figures, charts
+    )
+    target = int(s.get("image_target") or 0)
+    if target:
+        wechat_md, extra = enrich.top_up(wechat_md, target, s.get("topic", {}).get("title", ""))
+        report["mood"] = report.get("mood", 0) + extra
+    s["draft"] = {
+        "wechat_md": wechat_md,
+        "xhs_md": o.get("xhs_md") or parsed["xhs_md"],
+        "xhs_titles": o.get("xhs_titles") or parsed["xhs_titles"],
+        "xhs_tags": o.get("xhs_tags") or parsed["xhs_tags"],
+        "figures": figures,
+        "charts": charts,
+    }
+    with open(os.path.join(config.project_dir(pid), "ai_output.md"), "w", encoding="utf-8") as f:
+        f.write(ai_output)
+    s["stage"] = "media"
+    state.log(s, f"draft filled (parsed_ok={parsed['parsed_ok']}, enriched={report})")
+    state.save(pid, s)
+    return {
+        "ok": True,
+        "parsed_ok": parsed["parsed_ok"],
+        "enriched": report,
+        "project": _public(state.load(pid)),
+    }
+
+
 @app.route("/api/projects/<pid>/draft/fill", methods=["POST"])
 def api_draft_fill(pid):
     s = _load_or_404(_safe_pid(pid))
     b = _body()
     ai_output = b.get("ai_output", "")
     if not ai_output.strip():
-        return jsonify({"ok": False, "error": "empty ai_output"}), 400
-    parsed = brief.parse_ai_output(ai_output)
-    # allow manual override of individual fields
-    wechat_md = b.get("wechat_md") or parsed["wechat_md"]
-    figures = parsed.get("figures", [])
-    charts = parsed.get("charts", [])
+        return jsonify({"ok": False, "error": "请先粘贴 AI 回复"}), 400
+    return jsonify(_apply_ai_output(pid, s, ai_output, b))
 
-    # ── Auto-inject rich media placeholders ──────────────────────────────
-    # Strategy:
-    #   1. Cover image  – always inject [MOOD:cover_query] at very top
-    #   2. Figure cards – inject [FIGURE:fN] after first H2 if missing
-    #   3. Section mood – inject [MOOD:section_query] into every H2 section
-    #   4. Chart        – inject [CHART:cN] if data present
-    import re as _re
 
-    topic_title = s.get("topic", {}).get("title", "")
-    topic_kw = re.sub(r"[^\w\s]", "", topic_title.lower())[:30].strip() or "knowledge"
-    # Convert Chinese topic to safe English search query
-    en_kw_map = {
-        "ai": "artificial intelligence technology",
-        "教育": "education learning classroom",
-        "经济": "economy finance business",
-        "股": "stock market trading",
-        "房": "real estate housing",
-        "健康": "health wellness lifestyle",
-        "政策": "government policy document",
-        "科技": "technology innovation digital",
-        "创业": "startup entrepreneurship office",
-        "职场": "workplace office professional",
-    }
-    cover_query = "modern knowledge concept abstract"
-    for cn, en in en_kw_map.items():
-        if cn in topic_title:
-            cover_query = en
-            break
+CODEX_WRITE_TAIL = """
 
-    existing_phs = set(_re.findall(r"\[(FIGURE|MOOD|CHART):([^\]]+)\]", wechat_md))
-    existing_ids = {key for _, key in existing_phs}
-    existing_types = {t for t, _ in existing_phs}
+---
+你在本地以 Codex 身份执行：不要修改任何文件，不要运行命令，
+直接把完整稿件作为最终回复输出（只含上面「输出格式」里的标记块）。
+"""
 
-    lines_out = wechat_md.splitlines()
-    result_lines = []
-    h2_count = 0
-    figure_inserted = set()
-    chart_inserted = set()
 
-    # Insert cover MOOD at very top (before first line) unless already present
-    has_cover = any(k.startswith("cover") for _, k in existing_phs)
-    if not has_cover:
-        result_lines.append(f"\n[MOOD:{cover_query}] 封面配图\n")
+def _writer(pid, engine, extra_notes, perspective="", words=0, opts=None):
+    """Return fn(logf) that writes the full draft with the chosen engine."""
 
-    mood_queries = [
-        "office desk productivity focus",
-        "people learning concept idea",
-        "data analysis visualization chart",
-        "city technology modern future",
-        "notebook writing inspiration",
-    ]
-    mood_idx = 0
+    def fn(logf):
+        s = _load_or_404(pid)
+        topic = s.get("topic") or {}
+        opts_ = opts or {}
+        brief_md = brief.generate_brief(topic, extra_notes=extra_notes, perspective=perspective, words=words,
+                                        persp_level=opts_.get("level", "concept"), persp_paras=opts_.get("paras", 2),
+                                        n_images=opts_.get("images", 0))
+        if perspective and opts_.get("level") != "off":
+            logf(f"已嵌入写作视角：{perspective}（{'全文' if opts_.get('level') == 'full' else '只用于概念解释，最多 %s 处' % opts_.get('paras', 2)}）")
+        with open(os.path.join(config.project_dir(pid), "brief.md"), "w", encoding="utf-8") as f:
+            f.write(brief_md)
+        logf(f"简报已生成（{len(brief_md)} 字）")
+        if engine == "codex":
+            text = codex.run(brief_md + CODEX_WRITE_TAIL, os.path.join(config.project_dir(pid), "codex"), logf)
+            model = "Codex"
+        else:
+            logf(f"调用 {llm.settings()['model']} 写稿中…")
+            text = llm.write_draft(brief_md)
+            model = llm.settings()["model"]
+        if not text.strip():
+            raise RuntimeError("引擎没有返回内容")
+        logf(f"收到 {len(text)} 字，解析中")
+        out = _apply_ai_output(pid, state.load(pid), text)
+        out["model"] = model
+        out["project"] = None  # client refetches
+        return out
 
-    fig_by_order = list(figures)  # consume in order
-    fig_ptr = 0
-    ch_by_order = list(charts)
-    ch_ptr = 0
+    return fn
 
-    for ln in lines_out:
-        stripped = ln.strip()
-        result_lines.append(ln)
 
-        if stripped.startswith("## "):
-            h2_count += 1
-            # After each H2 heading: inject next figure card (first H2) or mood (subsequent)
-            if h2_count == 1 and fig_ptr < len(fig_by_order):
-                fig = fig_by_order[fig_ptr]
-                fid = str(fig.get("id", f"f{fig_ptr + 1}"))
-                if fid not in existing_ids:
-                    result_lines.append(
-                        f"\n[FIGURE:{fid}] {fig.get('caption', '框架图')}\n"
-                    )
-                    figure_inserted.add(fid)
-                fig_ptr += 1
-            elif h2_count > 1:
-                # inject atmosphere image for each section
-                q = mood_queries[mood_idx % len(mood_queries)]
-                mood_idx += 1
-                auto_key = f"sec{h2_count}"
-                if auto_key not in existing_ids:
-                    result_lines.append(f"\n[MOOD:{q}] 配图\n")
-                # inject remaining figure cards
-                if fig_ptr < len(fig_by_order):
-                    fig = fig_by_order[fig_ptr]
-                    fid = str(fig.get("id", f"f{fig_ptr + 1}"))
-                    if fid not in existing_ids:
-                        result_lines.append(
-                            f"\n[FIGURE:{fid}] {fig.get('caption', '框架图')}\n"
-                        )
-                        figure_inserted.add(fid)
-                    fig_ptr += 1
+def _start_job(kind, pid, fn):
+    """Start a background job, or run inline when ?wait=1 (tests, scripts)."""
+    if request.args.get("wait") == "1":
+        try:
+            result, log = jobs.run_sync(fn)
+        except RuntimeError as e:
+            return jsonify({"ok": False, "error": str(e)}), 502
+        return jsonify({"ok": True, "status": "done", "result": result, "log": log})
+    try:
+        job = jobs.start(kind, pid, fn)
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+    return jsonify({"ok": True, "job": jobs.public(job)})
 
-    # Inject any remaining figures/charts at end
-    while fig_ptr < len(fig_by_order):
-        fig = fig_by_order[fig_ptr]
-        fid = str(fig.get("id", f"f{fig_ptr + 1}"))
-        if fid not in existing_ids and fid not in figure_inserted:
-            result_lines.append(f"\n[FIGURE:{fid}] {fig.get('caption', '框架图')}\n")
-        fig_ptr += 1
-    while ch_ptr < len(ch_by_order):
-        ch = ch_by_order[ch_ptr]
-        cid = str(ch.get("id", f"c{ch_ptr + 1}"))
-        if cid not in existing_ids and cid not in chart_inserted:
-            result_lines.append(f"\n[CHART:{cid}] {ch.get('caption', '数据图')}\n")
-        ch_ptr += 1
 
-    wechat_md = "\n".join(result_lines)
+@app.route("/api/projects/<pid>/draft/write", methods=["POST"])
+def api_draft_write(pid):
+    """Write the full draft. engine: api (OpenAI-compatible) | codex (codex exec)."""
+    s = _load_or_404(_safe_pid(pid))
+    if not (s.get("topic") or {}).get("title"):
+        return jsonify({"ok": False, "error": "请先选定题目"}), 400
+    b = _body()
+    engine = b.get("engine", "api")
+    if engine not in ("api", "codex"):
+        return jsonify({"ok": False, "error": "engine 只能是 api / codex"}), 400
+    if engine == "api" and not llm.is_configured():
+        return jsonify({"ok": False, "error": "未配置写作模型：点右上角「设置」填写 Base URL / API Key / 模型"}), 502
+    if engine == "codex" and not codex.find_cmd():
+        return jsonify({"ok": False, "error": "没找到 codex 命令：npm i -g @openai/codex 后 codex login，或在设置里填 Codex 命令"}), 502
+    level = b.get("persp_level") or "concept"
+    if level not in perspective.LEVELS:
+        return jsonify({"ok": False, "error": "persp_level 只能是 off / concept / full"}), 400
+    opts = {"level": level, "paras": int(b.get("persp_paras") or 2), "images": int(b.get("images") or 0)}
+    s0 = state.load(pid)
+    if s0 is not None:
+        s0["image_target"] = opts["images"]
+        state.save(pid, s0)
+    return _start_job("write", pid, _writer(pid, engine, b.get("extra_notes", ""),
+                                            b.get("perspective", ""), int(b.get("words") or 0), opts))
 
-    s["draft"] = {
-        "wechat_md": wechat_md,
-        "xhs_md": b.get("xhs_md") or parsed["xhs_md"],
-        "xhs_titles": b.get("xhs_titles") or parsed["xhs_titles"],
-        "xhs_tags": b.get("xhs_tags") or parsed["xhs_tags"],
-        "figures": figures,
-        "charts": charts,
-    }
-    s["stage"] = "media"
-    state.log(s, f"draft filled (parsed_ok={parsed['parsed_ok']})")
-    state.save(pid, s)
-    return jsonify(
-        {
-            "ok": True,
-            "parsed_ok": parsed["parsed_ok"],
-            "project": _public(state.load(pid)),
-        }
-    )
+
+@app.route("/api/perspective/explain", methods=["POST"])
+def api_persp_explain():
+    """Paragraph tool: explain one concept with a perspective. Returns text only."""
+    b = _body()
+    term = (b.get("term") or "").strip()
+    if not term or len(term) > 60:
+        return jsonify({"ok": False, "error": "请选中或输入要解释的概念（60 字内）"}), 400
+    try:
+        prompt = perspective.concept_prompt(b.get("perspective") or "shifenxiyin", term, b.get("context") or "")
+        text = llm.chat(prompt, system="你是一位擅长把复杂概念讲给普通人的财经作者。")
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 502
+    return jsonify({"ok": True, "text": text})
+
+
+@app.route("/api/jobs/<jid>", methods=["GET"])
+def api_job(jid):
+    job = jobs.get(jid)
+    if not job:
+        abort(404, description="job not found")
+    return jsonify({"ok": True, "job": jobs.public(job, int(request.args.get("since", 0)))})
 
 
 @app.route("/api/projects/<pid>/draft", methods=["GET"])
@@ -329,87 +352,266 @@ def api_draft_edit(pid):
     return jsonify({"ok": True, "project": _public(s)})
 
 
-# ---------- stage 4: media ----------
-@app.route("/api/projects/<pid>/media/generate", methods=["POST"])
-def api_media_generate(pid):
-    s = _load_or_404(_safe_pid(pid))
+# ---------- stage 4+5: media & render ----------
+def _keep_manual(s):
+    """Manually supplied images survive regeneration (keyed by placeholder)."""
+    return {m["raw"]: m for m in s.get("media", {}).get("manifest", []) if m.get("engine") == "manual" and m.get("ok")}
+
+
+def _do_media(pid, s, mood_engine="stock", logf=None):
+    """Generate article images + XHS cards. Mutates and saves state."""
+    logf = logf or (lambda m: None)
     d = s.get("draft", {})
-    wechat_md = d.get("wechat_md", "")
-    if not wechat_md:
-        return jsonify({"ok": False, "error": "no wechat draft"}), 400
-    try:
-        manifest = media.generate_media(
-            pid, wechat_md, figures=d.get("figures", []), charts=d.get("charts", [])
-        )
-    except Exception as e:
-        return jsonify(
-            {
-                "ok": False,
-                "error": f"{type(e).__name__}: {e}",
-                "tb": traceback.format_exc()[-500:],
-            }
-        ), 500
-    # XHS cards
-    card_info = {"ok": False, "pngs": [], "log": "skipped"}
+    if mood_engine == "codex":
+        try:
+            _codex_art(pid, s, logf)
+        except RuntimeError as e:  # fall back to stock images, never lose the whole run
+            logf(f"✗ Codex 失败，氛围图改用图库：{e}"[:300])
+            mood_engine = "stock"
+        d = s.get("draft", {})
+    manifest = media.generate_media(
+        pid, d["wechat_md"], figures=d.get("figures", []), charts=d.get("charts", []),
+        mood_engine="ai" if mood_engine == "ai" else "stock",
+        title=s.get("topic", {}).get("title", ""), keep=_keep_manual(s), logf=logf,
+    )
+    if mood_engine == "codex":
+        _apply_codex_art(pid, manifest, logf)
+    card_info = {"ok": False, "pngs": [], "log": "skipped (no xhs draft)"}
     if d.get("xhs_md"):
+        logf("生成小红书卡片…")
         try:
             card_info = cards.generate_cards(
-                pid, d.get("xhs_md", ""), d.get("xhs_titles", []), d.get("xhs_tags", [])
+                pid, d["xhs_md"], d.get("xhs_titles", []), d.get("xhs_tags", [])
             )
         except Exception as e:
             card_info = {"ok": False, "pngs": [], "log": str(e)[:200]}
     s["media"] = {
         "manifest": manifest,
+        "engine": mood_engine,
         "cards": card_info.get("pngs", []),
         "cards_ok": card_info.get("ok"),
         "cards_log": card_info.get("log", ""),
     }
     ok_count = sum(1 for m in manifest if m.get("ok"))
-    state.log(
-        s,
-        f"media generated: {ok_count}/{len(manifest)} placeholders, cards={len(card_info.get('pngs', []))}",
-    )
+    logf(f"配图 {ok_count}/{len(manifest)} · 卡片 {len(s['media']['cards'])} 张")
+    state.log(s, f"media({mood_engine}): {ok_count}/{len(manifest)} images, {len(s['media']['cards'])} cards")
+    s["stage"] = "render"
     state.save(pid, s)
-    return jsonify({"ok": True, "project": _public(state.load(pid))})
 
 
-# ---------- stage 5: render ----------
-@app.route("/api/projects/<pid>/render", methods=["POST"])
-def api_render(pid):
-    s = _load_or_404(_safe_pid(pid))
+CODEX_ART_PROMPT = """你是公众号插画师兼信息设计师。当前目录是一个空工作目录，请直接在这里写文件，不要联网。
+
+文章标题：{title}
+
+任务一（框架图数据）：为下列框架图占位符写出结构化数据，保存为 figures.json（JSON 数组）：
+{fig_list}
+每项格式 {{"id","kind","caption","data"}}，kind 取 flow/compare/checklist/timeline，data schema：
+- flow: {{"title","subtitle","steps":[{{"label","desc"}}]}}（3-5 步）
+- compare: {{"title","subtitle","left":{{"name","items":[str]}},"right":{{"name","items":[str]}}}}
+- checklist: {{"title","subtitle","items":[{{"text","note"}}]}}
+- timeline: {{"title","subtitle","events":[{{"date","text"}}]}}
+内容要紧扣下面正文，不要空泛。没有框架图占位符就写 []。
+
+任务二（插画）：为下列配图位各画一张插画，每张一个文件 slot_<序号>.html：
+{mood_list}
+要求：纯 HTML + 内联 SVG/CSS，不引用任何外部资源和字体文件；根元素 <div id="figure" style="width:1080px;height:608px">；
+扁平编辑插画风，配色克制（主色不超过 3 个），画面里不放大段文字；字体只用 "Microsoft YaHei"。
+
+正文（节选）：
+{body}
+
+全部写完后，最终回复只需一行：DONE
+"""
+
+
+def _codex_art(pid, s, logf):
+    """Let Codex design missing framework data + draw SVG illustrations for MOOD slots."""
     d = s.get("draft", {})
-    wechat_md = d.get("wechat_md", "")
-    if not wechat_md:
-        return jsonify({"ok": False, "error": "no wechat draft"}), 400
+    phs = media.parse_placeholders(d.get("wechat_md", ""))
+    have = {str(f.get("id")) for f in d.get("figures", []) if f.get("data")}
+    figs = [p for p in phs if p["type"] == "FIGURE" and p["key"] not in have]
+    moods = [(i, p) for i, p in enumerate(phs, 1) if p["type"] == "MOOD"]
+    keep = _keep_manual(s)
+    moods = [(i, p) for i, p in moods if p["raw"] not in keep]
+    if not figs and not moods:
+        logf("Codex：没有需要它处理的配图位")
+        return
+    wd = os.path.join(config.project_dir(pid), "codex_art")
+    if os.path.isdir(wd):
+        import shutil
+
+        shutil.rmtree(wd, ignore_errors=True)
+    prompt = CODEX_ART_PROMPT.format(
+        title=s.get("topic", {}).get("title", ""),
+        fig_list="\n".join(f"- id={p['key']}：{p['caption']}" for p in figs) or "（无）",
+        mood_list="\n".join(f"- 序号 {i:02d}：{p['caption'] or p['key']}（意象：{p['key']}）" for i, p in moods) or "（无）",
+        body=d.get("wechat_md", "")[:6000],
+    )
+    logf(f"Codex 设计 {len(figs)} 张框架图、绘制 {len(moods)} 张插画…")
+    codex.run(prompt, wd, logf, writable=True)
+    fj = os.path.join(wd, "figures.json")
+    if os.path.exists(fj):
+        try:
+            with open(fj, encoding="utf-8") as f:
+                new = [x for x in json.load(f) if isinstance(x, dict) and x.get("id")]
+            byid = {str(x.get("id")): x for x in d.get("figures", [])}
+            byid.update({str(x["id"]): x for x in new})
+            d["figures"] = list(byid.values())
+            s["draft"] = d
+            logf(f"Codex 框架图数据 {len(new)} 份")
+        except (ValueError, OSError) as e:
+            logf(f"figures.json 解析失败：{e}")
+
+
+def _apply_codex_art(pid, manifest, logf):
+    """Screenshot slot_XX.html drawn by Codex into the MOOD slots."""
+    wd = os.path.join(config.project_dir(pid), "codex_art")
+    out_dir = os.path.join(config.project_dir(pid), "output")
+    for i, m in enumerate(manifest, 1):
+        if m["type"] != "MOOD" or m.get("engine") == "manual":
+            continue
+        src = os.path.join(wd, f"slot_{i:02d}.html")
+        if not os.path.exists(src):
+            m.update({"ok": False, "file": None, "engine": "codex", "log": "Codex 没有画这张"})
+            continue
+        try:
+            png = media.screenshot_html(src, os.path.join(out_dir, f"codex_{i:02d}.png"))
+            m.update({"ok": True, "file": png, "engine": "codex", "log": ""})
+        except Exception as e:  # noqa: BLE001
+            m.update({"ok": False, "file": None, "engine": "codex", "log": f"截图失败：{e}"[:300]})
+
+
+def _do_render(pid, s):
+    """Render WeChat HTML + markdown. Mutates and saves state."""
+    d = s.get("draft", {})
     manifest = s.get("media", {}).get("manifest", [])
+    html_str, meta = render.render_article(d["wechat_md"], manifest, topic=s.get("topic", {}))
+    path = render.save_html(pid, html_str, title=meta.get("title", "article"))
+    md_path = path[: -len(".html")] + ".md"
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(d["wechat_md"])
+    s["render"] = {"html_path": path, "md_path": md_path, "meta": meta}
+    # cover (2.35:1) from the first atmosphere photo, visible before publishing
     try:
-        html_str, meta = render.render_article(
-            wechat_md, manifest, topic=s.get("topic", {})
-        )
-        path = render.save_html(pid, html_str, title=meta.get("title", "article"))
-        # also save markdown
-        md_path = os.path.join(
-            config.project_dir(pid),
-            "output",
-            f"公众号_{re.sub(r'[^\\w\\u4e00-\\u9fff-]', '', meta.get('title', ''))[:30] or 'article'}_终版.md",
-        )
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(wechat_md)
+        src = next((m.get("file") for m in manifest if m.get("type") == "MOOD" and m.get("ok") and m.get("file")), None)
+        out_dir = os.path.dirname(path)
+        wechat_mp.make_cover(src, (s.get("topic") or {}).get("title") or meta.get("title", ""),
+                             os.path.join(out_dir, "wx_cover.jpg"), brand=config.brand())
+        s["render"]["cover_url"] = f"/output/{pid}/wx_cover.jpg"
+    except Exception:  # noqa: BLE001  cover is a nice-to-have
+        pass
+    s["stage"] = "review"
+    state.log(s, f"rendered: {meta.get('word_count', 0)} chars, {meta.get('sections', 0)} sections")
+    state.save(pid, s)
+
+
+def _step(pid, *steps):
+    """Run media/render steps with uniform error handling."""
+    s = _load_or_404(_safe_pid(pid))
+    if not s.get("draft", {}).get("wechat_md"):
+        return jsonify({"ok": False, "error": "还没有公众号稿件，请先回填"}), 400
+    try:
+        for fn in steps:
+            fn(pid, s)
     except Exception as e:
         return jsonify(
-            {
-                "ok": False,
-                "error": f"{type(e).__name__}: {e}",
-                "tb": traceback.format_exc()[-500:],
-            }
+            {"ok": False, "error": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()[-500:]}
         ), 500
-    s["render"] = {"html_path": path, "md_path": md_path, "meta": meta}
-    state.log(
-        s,
-        f"rendered html: {meta.get('word_count', 0)} words, {meta.get('sections', 0)} sections",
-    )
-    state.save(pid, s)
     return jsonify({"ok": True, "project": _public(state.load(pid))})
+
+
+@app.route("/api/projects/<pid>/media/generate", methods=["POST"])
+def api_media_generate(pid):
+    return _step(pid, _do_media)
+
+
+@app.route("/api/projects/<pid>/render", methods=["POST"])
+def api_render(pid):
+    return _step(pid, _do_render)
+
+
+IMAGE_ENGINES = ("stock", "ai", "codex")
+
+
+@app.route("/api/projects/<pid>/produce", methods=["POST"])
+def api_produce(pid):
+    """One click: images + cards + layout, in the background.
+    image_engine: stock (Pexels 图库) | ai (生图 API) | codex (Codex 画插画+设计框架)"""
+    s = _load_or_404(_safe_pid(pid))
+    if not s.get("draft", {}).get("wechat_md"):
+        return jsonify({"ok": False, "error": "还没有公众号稿件，请先写稿"}), 400
+    eng = _body().get("image_engine", "stock")
+    if eng not in IMAGE_ENGINES:
+        return jsonify({"ok": False, "error": "image_engine 只能是 stock / ai / codex"}), 400
+    if eng == "ai" and not imagegen.is_configured():
+        return jsonify({"ok": False, "error": "未配置生图接口：点右上角「设置」填写"}), 502
+    if eng == "codex" and not codex.find_cmd():
+        return jsonify({"ok": False, "error": "没找到 codex 命令"}), 502
+
+    def fn(logf):
+        st = state.load(pid)
+        _do_media(pid, st, eng, logf)
+        logf("排版中…")
+        _do_render(pid, state.load(pid))
+        meta = state.load(pid)["render"]["meta"]
+        logf(f"排版完成：{meta.get('word_count', 0)} 字 · {meta.get('images', 0)} 图")
+        return {"meta": meta}
+
+    return _start_job("produce", pid, fn)
+
+
+ALLOWED_IMG = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg", "webp": ".webp", "gif": ".gif"}
+
+
+@app.route("/api/projects/<pid>/media/slot/<int:idx>", methods=["POST", "DELETE"])
+def api_media_slot(pid, idx):
+    """Manually set (upload / paste) or clear the image of slot idx (1-based), then re-render."""
+    import base64
+
+    s = _load_or_404(_safe_pid(pid))
+    man = s.get("media", {}).get("manifest", [])
+    if not 1 <= idx <= len(man):
+        return jsonify({"ok": False, "error": "配图位不存在，请先一键生产"}), 400
+    entry = man[idx - 1]
+    if request.method == "DELETE":
+        entry.update({"ok": False, "file": None, "engine": "none", "log": "已移除，重新生产时会自动补图"})
+    else:
+        raw, ext = None, None
+        f = request.files.get("file")
+        if f:
+            ext = ALLOWED_IMG.get((f.filename or "").rsplit(".", 1)[-1].lower())
+            raw = f.read()
+        else:
+            m = re.match(r"data:image/(\w+);base64,(.+)", _body().get("data_url", ""), re.DOTALL)
+            if m:
+                ext, raw = ALLOWED_IMG.get(m.group(1).lower()), base64.b64decode(m.group(2))
+        if not raw or not ext:
+            return jsonify({"ok": False, "error": "只支持 png / jpg / webp / gif 图片"}), 400
+        if len(raw) > 15 * 1024 * 1024:
+            return jsonify({"ok": False, "error": "图片超过 15MB"}), 400
+        path = os.path.join(config.project_dir(pid), "output", f"manual_{idx:02d}_{int(time.time())}{ext}")
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        entry.update({"ok": True, "file": path, "engine": "manual", "log": ""})
+    state.log(s, f"slot {idx} -> {entry['engine']}")
+    state.save(pid, s)
+    _do_render(pid, state.load(pid))
+    return jsonify({"ok": True, "project": _public(state.load(pid))})
+
+
+# ---------- settings ----------
+@app.route("/api/settings", methods=["GET"])
+def api_settings_get():
+    return jsonify({"ok": True, "settings": app_settings.public()})
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_settings_set():
+    try:
+        app_settings.update(_body())
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "settings": app_settings.public()})
 
 
 # ---------- stage 6: review ----------
@@ -466,6 +668,35 @@ def api_wechat_copy(pid):
     return jsonify({"ok": ok, "msg": msg})
 
 
+@app.route("/api/projects/<pid>/publish/wechat/draft", methods=["POST"])
+def api_wechat_draft(pid):
+    """Save the rendered article into the Official Account draft box (API)."""
+    s = _load_or_404(_safe_pid(pid))
+    d = s.get("draft", {})
+    man = s.get("media", {}).get("manifest", [])
+    if not d.get("wechat_md") or not s.get("render"):
+        return jsonify({"ok": False, "error": "请先一键生产（配图+排版）"}), 400
+    if not wechat_mp.is_configured():
+        return jsonify({"ok": False, "error": "未配置公众号：点右上角「设置」填写 AppID / AppSecret，并把本机公网 IP 加进白名单"}), 502
+    b = _body()
+
+    def fn(logf):
+        st = state.load(pid)
+        meta = st["render"]["meta"]
+        title = b.get("title") or meta.get("title") or st.get("topic", {}).get("title", "")
+        cover = b.get("cover") or next((m["file"] for m in man if m.get("ok") and m["type"] == "MOOD"), None) \
+            or next((m["file"] for m in man if m.get("ok")), None)
+        r = wechat_mp.publish_draft(st["draft"]["wechat_md"], man, title, b.get("digest") or meta.get("lead", ""),
+                                    cover, os.path.join(config.project_dir(pid), "output"), logf)
+        st.setdefault("publish", {})["wechat_draft"] = {"media_id": r["media_id"], "at": time.time()}
+        state.log(st, f"wechat draft saved: {r['media_id']}")
+        state.save(pid, st)
+        logf(f"已存入草稿箱（{r['images']} 张正文图 + 封面）")
+        return r
+
+    return _start_job("wxdraft", pid, fn)
+
+
 @app.route("/api/projects/<pid>/publish/wechat/open", methods=["POST"])
 def api_wechat_open(pid):
     ok, log = publish.open_platform("wechat")
@@ -518,6 +749,30 @@ def api_archive(pid):
     )
 
 
+@app.route("/api/projects/<pid>/export.zip", methods=["GET"])
+def api_export(pid):
+    """Download all deliverables (output/ + brief + manifest) as one zip."""
+    import io
+    import zipfile
+
+    from flask import send_file
+
+    s = _load_or_404(_safe_pid(pid))
+    pdir = config.project_dir(pid)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, _, files in os.walk(pdir):
+            for f in files:
+                if f == "state.json" or f.startswith("_"):
+                    continue  # internal files
+                full = os.path.join(root, f)
+                z.write(full, os.path.relpath(full, pdir))
+    buf.seek(0)
+    safe = re.sub(r"[^\w\u4e00-\u9fff-]", "", s.get("title", ""))[:30] or pid
+    return send_file(buf, mimetype="application/zip", as_attachment=True,
+                     download_name=f"yigao_{safe}.zip")
+
+
 # ---------- health ----------
 @app.route("/api/health", methods=["GET"])
 def api_health():
@@ -532,6 +787,13 @@ def api_health():
             "unsplash_key": bool(os.environ.get("UNSPLASH_ACCESS_KEY")),
             "agent_browser": bool(ab) and ab != "agent-browser",
             "playwright": _check_playwright(),
+            "llm": llm.public_info(),
+            "imagegen": imagegen.public_info(),
+            "codex": codex.public_info(),
+            "wechat_mp": wechat_mp.public_info(),
+            "perspectives": perspective.available(),
+            "brand": config.brand(),
+            "product": config.PRODUCT_NAME,
             "workspace": config.WORKSPACE_DIR,
         }
     )
@@ -554,6 +816,6 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
-    print(f"[jzs-studio] starting on http://{args.host}:{args.port}")
-    print(f"[jzs-studio] workspace: {config.WORKSPACE_DIR}")
+    print(f"[{config.PRODUCT_NAME}] starting on http://{args.host}:{args.port}")
+    print(f"[{config.PRODUCT_NAME}] workspace: {config.WORKSPACE_DIR}")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)

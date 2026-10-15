@@ -25,7 +25,8 @@ def _read_ref(name):
     path = os.path.join(config.REFERENCES_DIR, name)
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+            # style docs were written for the original column; use current brand
+            return f.read().replace("巨人之上", config.brand())
     return ""
 
 
@@ -136,7 +137,7 @@ def plan_images(topic_title, topic_summary=""):
     return plan
 
 
-def generate_brief(topic, extra_notes=""):
+def generate_brief(topic, extra_notes="", perspective="", words=0, persp_level="concept", persp_paras=2, n_images=0):
     """Generate the unified dual-platform creative brief (markdown string)."""
     title = topic.get("title", "")
     summary = topic.get("summary", "")
@@ -158,26 +159,11 @@ def generate_brief(topic, extra_notes=""):
         img_table += f"| {p['pos']} | {p['type']} | {p['engine']} | {p['desc']} |\n"
 
     finance_note = ""
-    ft = (title + summary).lower()
-    if any(
-        k in ft
-        for k in [
-            "美联储",
-            "利率",
-            "股",
-            "基金",
-            "楼市",
-            "汇率",
-            "黄金",
-            "国债",
-            "财经",
-            "经济",
-            "投资",
-        ]
-    ):
-        finance_note = "\n> ⚠️ 本文涉及财经，正文末尾必须加免责声明：「行情为已发生的客观描述，不构成任何买卖推荐。」\n"
+    if config.is_finance(title + " " + summary):
+        finance_note = f"\n> ⚠️ 本文涉及财经，正文末尾必须加免责声明：「{config.FINANCE_DISCLAIMER}」\n"
 
-    brief = f"""# 「巨人之上」双平台创作简报
+    length = f"约{int(words)}字（±10%），严格控制篇幅" if words else "2500-4000字"
+    brief = f"""# 「{config.brand()}」双平台创作简报
 
 把这份简报整段复制给任意 AI（ws / Codex / 通义 / Kimi / 豆包网页版均可），
 让它按末尾「输出格式」产出稿件，再把 AI 的完整回复粘回工作台「回填稿件」步骤。
@@ -187,7 +173,7 @@ def generate_brief(topic, extra_notes=""):
 ## 一、你的任务
 
 围绕下面选定的题目，写两份内容：
-1. **微信公众号长文**（2500-4000字，深度）
+1. **微信公众号长文**（{length}，深度）
 2. **小红书笔记**（正文≤1000字 + 标题×2 + 标签6-8个，降维干货）
 
 ## 二、选定题目
@@ -199,7 +185,7 @@ def generate_brief(topic, extra_notes=""):
 {finance_note}
 ## 三、账号定位（务必遵守）
 
-{wechat_pos or '频道「巨人之上」：给AI时代想借力提效的普通人（非开发者），主张"不自己造轮子，先找别人造好的缆车"。'}
+{wechat_pos or '频道「{config.brand()}」：给AI时代想借力提效的普通人（非开发者），主张"不自己造轮子，先找别人造好的缆车"。'}
 
 ## 四、公众号长文要求
 
@@ -209,16 +195,20 @@ def generate_brief(topic, extra_notes=""):
 ### 结构模板
 {wechat_struct}
 
-    ### 配图规划（⚠️ 占位符是强制要求，不写会导致配图全部跳过）
+### 配图规划（⚠️ 占位符是强制要求，不写会导致配图全部跳过）
 {img_table}
 **占位符写法**（每张图单独占一行，格式严格，不能省略）：
-- 框架图（必须写）：`[FIGURE:f1] 图说文字`（f1/f2… 编号与下方 FIGURES 块 id 对应；kind 取 flow/compare/checklist/timeline）
+- 知识框架图（必须写 1 张）：`[FIGURE:f1] 图说文字`（f1/f2… 编号与下方 FIGURES 块 id 对应；**首选 kind=mindmap 逻辑脑图**，其它 kind 只在确实是纯流程/对比/时间线时用）
 - 氛围图（每篇至少1张）：`[MOOD:英文搜索词] 图说文字`（搜索词用英文具象名词，如 `[MOOD:bond market finance]`）
 - 数据图：`[CHART:c1] 图说文字`（c1… 与下方 CHARTS 块 id 对应）
 
 ⚠️ **关键**：正文里每一个 [FIGURE:xxx] / [MOOD:xxx] / [CHART:xxx] 都必须单独占一行，前后空行，不能合并进段落。工作台会据此自动配图，你只需留占位符 + 在末尾提供结构化数据。
 
-### 框架图数据结构（FIGURES 块用，四种 kind 的 JSON schema）
+### 框架图数据结构（FIGURES 块用）
+- **mindmap（逻辑脑图，首选）**：不是目录！要把全文的关键信息组织成「中心结论 → 3-6 个逻辑分支 → 每支 2-4 条带数据的要点」，分支之间体现因果/传导/对立关系：
+  `{{"title":"图标题(≤14字)","subtitle":"一句话背景","root":"中心命题(≤10字)","root_note":"关键数据","takeaway":"一句话结论，可用**加粗**",
+    "branches":[{{"label":"分支名(≤8字)","tag":"起因/链一/链二/误区/行动…","relation":"与中心的关系(≤6字，如：倒逼、传导、对冲)","note":"可选一句","children":["关键词：具体数据或判断", "…"]}}]}}`
+  要求：children 必须是**具体信息**（数字、因果、判断），禁止只写章节名；每条 ≤22 字，用「关键词：说明」格式
 - flow（流程）：`{{"title","subtitle","steps":[{{"label","desc"}}]}}`
 - compare（对比）：`{{"title","subtitle","left":{{"name","items":[str]}},"right":{{"name","items":[str]}}}}`
 - checklist（清单）：`{{"title","subtitle","items":[{{"text","note"}}]}}`
@@ -253,7 +243,7 @@ def generate_brief(topic, extra_notes=""):
 
 {M_FIGURES[0]}
 [
-  {{"id":"f1","kind":"flow","caption":"图说文字","data":{{"title":"...","subtitle":"...","steps":[{{"label":"...","desc":"..."}}]}}}}
+  {{"id":"f1","kind":"mindmap","caption":"图说文字","data":{{"title":"...","subtitle":"...","root":"...","root_note":"...","takeaway":"...","branches":[{{"label":"...","tag":"...","relation":"...","children":["关键词：数据/判断"]}}]}}}}
 ]
 {M_FIGURES[1]}
 
@@ -267,7 +257,47 @@ def generate_brief(topic, extra_notes=""):
 """
     if extra_notes:
         brief += f"\n## 七、额外要求（用户补充）\n\n{extra_notes}\n"
+    if n_images:
+        brief += (f"\n## 配图数量（用户指定）\n\n全文正好 {int(n_images)} 张图：1 张 [FIGURE] 知识脑图，"
+                  f"至少 1 张 [MOOD] 氛围图（第一张氛围图会被用作封面），其余按内容选 [CHART] 或 [MOOD]。\n")
+    if perspective and persp_level != "off":
+        from . import perspective as _pv
+
+        brief += _pv.brief_block(perspective, f"{title} {summary} {angle}", level=persp_level, max_paras=persp_paras)
     return brief
+
+
+_TOC_HEAD = re.compile(r"^#{1,3}\s*(目录|目\s*录|contents|toc)\s*$", re.I)
+_READ_TIME = re.compile(r"^\s*[（(]?\s*(全文)?约\s*[\d,，.]+\s*字[，,、\s]*(阅读|读完|预计阅读)[^\n]{0,12}分钟[。.)）]?\s*$")
+
+
+def strip_self_toc(md):
+    """Models often write their own '## 目录' + bullet list + '约N字读完N分钟'.
+    The renderer builds both automatically, so drop them (keep any placeholders
+    like [FIGURE:..] that the model parked inside that section)."""
+    lines = (md or "").splitlines()
+    out, in_toc = [], False
+    for ln in lines:
+        st = ln.strip()
+        if _TOC_HEAD.match(st):
+            in_toc = True
+            continue
+        if in_toc:
+            if st.startswith("## ") or st == "---":
+                in_toc = False
+                if st == "---":
+                    continue
+            elif not st or re.match(r"^([-*+]|\d+[.、)])\s+", st) or _READ_TIME.match(st):
+                continue
+            elif st.startswith("["):  # placeholder: keep
+                out.append(ln)
+                continue
+            else:
+                in_toc = False
+        if _READ_TIME.match(st):
+            continue
+        out.append(ln)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
 
 
 def parse_ai_output(text):
@@ -324,9 +354,11 @@ def parse_ai_output(text):
             tags = [t.strip() for t in tags_block.splitlines() if t.strip()]
 
     # Fallback: no markers at all -> treat whole text as wechat draft
-    if not wechat and not xhs:
+    parsed_ok = bool(wechat or xhs)
+    if not parsed_ok:
         wechat = text.strip()
 
+    wechat = strip_self_toc(wechat)
     return {
         "wechat_md": wechat,
         "xhs_md": xhs,
@@ -334,5 +366,5 @@ def parse_ai_output(text):
         "xhs_tags": tags,
         "figures": figures,
         "charts": charts,
-        "parsed_ok": bool(wechat or xhs),
+        "parsed_ok": parsed_ok,
     }

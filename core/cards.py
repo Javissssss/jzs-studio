@@ -13,10 +13,10 @@ CARD_W, CARD_H = 1080, 1440
 
 BASE_CSS = """
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:"Noto Sans SC","Microsoft YaHei",sans-serif;background:#e8e4dc}
+body{font-family:"Microsoft YaHei","微软雅黑","PingFang SC",sans-serif;background:#e8e4dc}
 .card{width:1080px;height:1440px;position:relative;overflow:hidden;
   display:flex;flex-direction:column;padding:90px 80px}
-.serif{font-family:"Noto Serif SC","Songti SC",serif}
+.serif{font-family:"Microsoft YaHei","微软雅黑","PingFang SC",sans-serif}
 /* cover */
 .cover{background:linear-gradient(150deg,#2a211c 0%,#3d2b22 45%,#5a3527 100%);color:#FAF9F5}
 .cover .brand{font-size:30px;letter-spacing:.35em;color:#E8A184;font-weight:600;margin-bottom:auto}
@@ -82,6 +82,7 @@ def _split_xhs(xhs_md):
 
 def build_cards_html(xhs_md, titles, tags=None, max_content=4):
     """Build single HTML with #card1..#cardN."""
+    brand = config.brand()
     title = (titles[0] if titles else "干货分享")[:20]
     hook, body, golden, md_tags = _split_xhs(xhs_md)
     tags = tags or md_tags or []
@@ -90,7 +91,7 @@ def build_cards_html(xhs_md, titles, tags=None, max_content=4):
     hook_text = " ".join(hook)[:60] if hook else "一次讲清，建议收藏"
     cards.append(f"""
 <div class="card cover serif" id="card1">
-  <div class="brand">巨人之上</div>
+  <div class="brand">{html.escape(brand)}</div>
   <div class="kicker">今日分享</div>
   <h1>{html.escape(title)}</h1>
   <div class="accentbar"></div>
@@ -106,7 +107,7 @@ def build_cards_html(xhs_md, titles, tags=None, max_content=4):
 <div class="card content" id="card{n}">
   <div class="top"><div class="num">{n - 1}</div><div class="ct serif">{html.escape(chunk[0][:16])}</div></div>
   <div class="body"><p>{text}</p></div>
-  <div class="foot"><span>巨人之上</span><span>{n:02d}</span></div>
+  <div class="foot"><span>{html.escape(brand)}</span><span>{n:02d}</span></div>
 </div>""")
         n += 1
     # Closing card
@@ -118,7 +119,7 @@ def build_cards_html(xhs_md, titles, tags=None, max_content=4):
 <div class="card closing serif" id="card{n}">
   <div class="quote">{html.escape(golden_text[:50])}</div>
   <div class="tags">{html.escape(tags_text)}</div>
-  <div class="cta">关注「巨人之上」· 这个时代奖励最会借力的人</div>
+  <div class="cta">关注「{html.escape(brand)}」· 收藏慢慢看</div>
 </div>""")
     total = n
     return (

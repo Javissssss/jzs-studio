@@ -1,166 +1,227 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>巨人之上 · 内容工作台</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一稿 · 内容工作台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f46e5'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Microsoft YaHei'>稿</text></svg>">
 <link rel="stylesheet" href="/web/style.css">
+<script>document.documentElement.dataset.theme = localStorage.getItem("yg-theme") || "light";</script>
 </head>
 <body>
-<div id="app">
 
-  <!-- ===== TOP BAR ===== -->
-  <header class="bar">
-    <div class="bar-l">
-      <span class="logo-mark">巨</span>
-      <span class="logo-name">内容工作台</span>
-      <div class="proj-switcher">
-        <select id="proj-sel"></select>
-        <button class="btn-icon" id="btn-new" title="新建项目">＋</button>
-        <button class="btn-icon danger" id="btn-del" title="删除项目">×</button>
-      </div>
-    </div>
-    <div class="bar-r" id="health-bar"></div>
-  </header>
-
-  <!-- ===== MAIN SPLIT ===== -->
-  <div class="split">
-
-    <!-- LEFT: ops -->
-    <aside class="ops" id="ops">
-
-      <!-- 1. 选题 -->
-      <section class="block" id="blk-topic">
-        <div class="blk-head" data-blk="topic">
-          <span class="blk-num">1</span>
-          <span class="blk-title">选题</span>
-          <span class="blk-status" id="st-topic"></span>
-          <span class="blk-arrow">▾</span>
-        </div>
-        <div class="blk-body">
-          <div class="seg-row" id="mode-seg">
-            <button class="seg active" data-m="weibo">微博热搜</button>
-            <button class="seg" data-m="toutiao">头条热榜</button>
-            <button class="seg" data-m="manual">手动粘贴</button>
-            <button class="seg" data-m="direct">直接指定</button>
-          </div>
-          <div id="mode-inputs"></div>
-          <button class="btn primary w100 mt6" id="btn-fetch">抓取</button>
-          <div id="cand-list" class="cand-list"></div>
-          <button class="btn accent w100 mt8" id="btn-pick" disabled>选定此题 →</button>
-        </div>
-      </section>
-
-      <!-- 2. 简报 + 回填 -->
-      <section class="block collapsed" id="blk-brief">
-        <div class="blk-head" data-blk="brief">
-          <span class="blk-num">2</span>
-          <span class="blk-title">创作简报 &amp; 回填</span>
-          <span class="blk-status" id="st-brief"></span>
-          <span class="blk-arrow">▾</span>
-        </div>
-        <div class="blk-body">
-          <div class="row-btns">
-            <button class="btn primary" id="btn-gen-brief">生成简报</button>
-            <button class="btn ghost" id="btn-copy-brief" disabled>复制简报</button>
-          </div>
-          <div class="brief-preview" id="brief-preview"></div>
-          <label class="field-label mt8">把 AI 完整回复粘在这里 ↓</label>
-          <textarea id="ai-paste" class="ta mono" rows="8" placeholder="===WECHAT_START===&#10;...&#10;===WECHAT_END===&#10;&#10;（无标记也能用）"></textarea>
-          <button class="btn accent w100 mt6" id="btn-fill">解析回填 →</button>
-          <div id="fill-status" class="fill-status"></div>
-        </div>
-      </section>
-
-      <!-- 3. 配图 + 排版 -->
-      <section class="block collapsed" id="blk-media">
-        <div class="blk-head" data-blk="media">
-          <span class="blk-num">3</span>
-          <span class="blk-title">配图 &amp; 排版</span>
-          <span class="blk-status" id="st-media"></span>
-          <span class="blk-arrow">▾</span>
-        </div>
-        <div class="blk-body">
-          <p class="hint">按正文占位符自动生成：框架图 / 氛围图(Pexels) / 数据图 + 小红书卡片，然后自动排版。约 30-90s。</p>
-          <button class="btn accent w100" id="btn-media">生成配图并排版</button>
-          <div id="media-log" class="media-log"></div>
-        </div>
-      </section>
-
-      <!-- 4. 发布 -->
-      <section class="block collapsed" id="blk-pub">
-        <div class="blk-head" data-blk="pub">
-          <span class="blk-num">4</span>
-          <span class="blk-title">存草稿发布</span>
-          <span class="blk-status" id="st-pub"></span>
-          <span class="blk-arrow">▾</span>
-        </div>
-        <div class="blk-body">
-          <p class="hint red">产品只存草稿，正式发表由你点。</p>
-          <div class="pub-row">
-            <span class="pub-label">公众号</span>
-            <div class="btn-group">
-              <button class="btn primary sm" id="btn-wc-copy">复制富文本</button>
-              <button class="btn ghost sm" id="btn-wc-open">打开后台</button>
-            </div>
-          </div>
-          <div class="pub-row">
-            <span class="pub-label">小红书</span>
-            <div class="btn-group">
-              <button class="btn primary sm" id="btn-xhs-copy">复制文案</button>
-              <button class="btn ghost sm" id="btn-xhs-open">打开平台</button>
-            </div>
-          </div>
-          <button class="btn ghost w100 mt10" id="btn-archive">完成归档</button>
-        </div>
-      </section>
-
-    </aside>
-
-    <!-- RIGHT: preview -->
-    <div class="preview" id="preview">
-      <div class="pv-empty" id="pv-empty">
-        <div class="pv-icon">📄</div>
-        <div>新建项目后在左侧操作<br>右侧实时预览</div>
-      </div>
-
-      <div class="pv-stack" id="pv-stack">
-        <!-- topic card -->
-        <div class="pv-card hidden" id="pv-topic">
-          <div class="pv-card-label">当前选题</div>
-          <div class="pv-topic-title" id="pv-topic-title"></div>
-          <div class="pv-topic-meta" id="pv-topic-meta"></div>
-        </div>
-
-        <!-- draft stats -->
-        <div class="pv-card hidden" id="pv-draft">
-          <div class="pv-card-label">稿件概览</div>
-          <div id="pv-draft-stats" class="pv-stats"></div>
-          <div id="pv-xhs-titles" class="pv-xhs-titles"></div>
-          <div id="pv-tags" class="pv-tags"></div>
-        </div>
-
-        <!-- media thumbs -->
-        <div class="pv-card hidden" id="pv-media">
-          <div class="pv-card-label">配图产出</div>
-          <div id="pv-thumbs" class="pv-thumbs"></div>
-        </div>
-
-        <!-- wechat iframe -->
-        <div class="pv-card pv-frame-card hidden" id="pv-render">
-          <div class="pv-card-label-row">
-            <span class="pv-card-label">公众号终版</span>
-            <a class="pv-link" id="pv-render-link" href="#" target="_blank">↗ 新窗口打开</a>
-          </div>
-          <iframe class="pv-frame" id="pv-frame" src="about:blank"></iframe>
-        </div>
-      </div>
-    </div>
-
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">稿</span>
+    <div><b>一稿</b><small>一次创作 · 双平台分发</small></div>
   </div>
+  <div class="proj">
+    <select id="proj-sel" aria-label="切换项目"></select>
+    <button class="btn ghost sm" id="btn-new">＋ 新建</button>
+    <button class="btn ghost sm icon" id="btn-del" title="删除当前项目" aria-label="删除当前项目">✕</button>
+  </div>
+  <div class="top-right">
+    <div class="health" id="health-bar"></div>
+    <button class="btn ghost sm icon" id="btn-theme" title="切换深浅色" aria-label="切换深浅色">◐</button>
+    <button class="btn ghost sm" id="btn-settings">⚙ 设置</button>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- step rail -->
+  <nav class="rail" aria-label="流程">
+    <ol id="steps">
+      <li data-step="topic"><span class="n">1</span><div><b>选题</b><small id="st-topic">热榜 / 手动 / 直接给题</small></div></li>
+      <li data-step="write"><span class="n">2</span><div><b>写稿</b><small id="st-write">API · Codex · 粘贴</small></div></li>
+      <li data-step="media"><span class="n">3</span><div><b>配图排版</b><small id="st-media">图库 · AI 生图 · Codex</small></div></li>
+      <li data-step="publish"><span class="n">4</span><div><b>发布</b><small id="st-publish">自检 · 复制 · 导出</small></div></li>
+    </ol>
+    <div class="rail-foot">
+      <a class="btn ghost sm block" id="btn-export" href="#" download>⇩ 导出全部产出</a>
+    </div>
+  </nav>
+
+  <!-- work area -->
+  <main class="work">
+    <section class="empty" id="empty">
+      <div class="empty-mark">稿</div>
+      <h1>从一个题目，到两份能发的稿子</h1>
+      <p>选题 → AI 写公众号长文和小红书笔记 → 自动配图、出卡片、排版 → 复制到平台。</p>
+      <button class="btn primary lg" id="btn-start">新建第一篇</button>
+    </section>
+
+    <!-- 1. topic -->
+    <section class="panel" data-panel="topic">
+      <header class="panel-h"><h2>选题</h2><p>从热榜挑，或者直接给一个题目。</p></header>
+      <div class="seg" id="mode-seg" role="tablist">
+        <button class="on" data-m="direct">直接给题</button>
+        <button data-m="weibo">微博热搜</button>
+        <button data-m="toutiao">头条热榜</button>
+        <button data-m="baidu">百度热搜</button>
+        <button data-m="manual">批量粘贴</button>
+      </div>
+      <div id="mode-inputs" class="stack"></div>
+      <div class="row">
+        <button class="btn primary" id="btn-fetch">使用这个题目</button>
+        <label class="check hidden" id="niche-wrap"><input type="checkbox" id="niche-only"> 只看垂直相关</label>
+      </div>
+      <div class="cands" id="cand-list"></div>
+      <div class="row hidden" id="pick-row"><button class="btn primary" id="btn-pick" disabled>用选中的题目</button><span class="muted">双击候选也可以直接选定</span></div>
+    </section>
+
+    <!-- 2. write -->
+    <section class="panel" data-panel="write">
+      <header class="panel-h"><h2>写稿</h2><p id="write-topic" class="muted"></p></header>
+      <div class="seg" id="write-seg" role="tablist">
+        <button class="on" data-w="api">⚡ API 调用</button>
+        <button data-w="codex">⌘ Codex 自动执行</button>
+        <button data-w="paste">⎘ 粘贴文本</button>
+      </div>
+
+      <div class="mode-box" data-wbox="api">
+        <p class="desc">把创作简报发给你配置的模型（DeepSeek / 通义 / Kimi / OpenAI 等任意 OpenAI 兼容接口），一次写出公众号 + 小红书双稿。</p>
+        <div class="engine-state" id="es-api"></div>
+      </div>
+      <div class="mode-box hidden" data-wbox="codex">
+        <p class="desc">在本机后台运行 <code>codex exec</code>，用你自己的 Codex 登录写稿，不需要额外 API Key。过程日志实时显示在下方。</p>
+        <div class="engine-state" id="es-codex"></div>
+      </div>
+      <div class="mode-box hidden" data-wbox="paste">
+        <p class="desc">复制简报给任意 AI（网页版也行），把它的完整回复贴回来。</p>
+        <div class="row"><button class="btn" id="btn-gen-brief">生成并复制简报</button><span class="muted" id="brief-hint"></span></div>
+        <details class="hidden" id="brief-details"><summary>查看简报全文</summary><pre id="brief-preview"></pre></details>
+        <textarea class="ta mono" id="ai-paste" rows="9" placeholder="粘贴 AI 的完整回复（含 ===WECHAT_START=== 等标记块）。Ctrl+Enter 提交"></textarea>
+      </div>
+
+      <label class="field"><span>补充要求（可选）</span>
+        <div class="row">
+          <label class="small">目标字数 <input id="w-words" type="number" min="0" step="500" placeholder="不限" style="width:90px"></label>
+          <label class="small">配图数 <input id="w-images" type="number" min="0" max="10" placeholder="自动" style="width:70px"></label>
+        </div>
+        <div class="persp-box" id="persp-box">
+          <label class="switch"><input type="checkbox" id="w-persp-on"><span>调用《十分吸引》思维框架</span></label>
+          <span class="muted small" id="persp-state"></span>
+          <div class="row persp-opts hidden" id="persp-opts">
+            <div class="seg sm" id="persp-level">
+              <button class="on" data-l="concept" type="button">只用于解释概念</button>
+              <button data-l="full" type="button">全文使用</button>
+            </div>
+            <label class="small" id="persp-paras-w">最多 <input id="w-persp-paras" type="number" min="1" max="6" value="2" style="width:56px"> 处</label>
+          </div>
+        </div>
+        <textarea class="ta" id="extra-notes" rows="2" placeholder="例：多用生活比喻；结尾给 3 条行动清单；面向 30 岁上班族"></textarea>
+      </label>
+      <div class="row">
+        <button class="btn primary" id="btn-write">开始写稿</button>
+        <button class="btn ghost" id="btn-edit" disabled>✎ 编辑稿件</button>
+      </div>
+      <div class="console hidden" id="write-console"><div class="console-h"><span id="write-status">运行中</span><span id="write-sec"></span></div><ol id="write-log"></ol></div>
+      <div class="note" id="fill-status"></div>
+    </section>
+
+    <!-- 3. media -->
+    <section class="panel" data-panel="media">
+      <header class="panel-h"><h2>配图与排版</h2><p>框架图、数据图由模板自动画；氛围图选一种来源。任何一张都可以单独替换。</p></header>
+      <div class="engines" id="img-engines">
+        <label class="eng"><input type="radio" name="img-eng" value="stock" checked>
+          <b>图库搜图</b><small>Pexels / Openverse 免费图库，按关键词搜</small><i id="ie-stock"></i></label>
+        <label class="eng"><input type="radio" name="img-eng" value="ai">
+          <b>AI 生图 API</b><small>gpt-image / 豆包 Seedream / 可图等，按图说生成</small><i id="ie-ai"></i></label>
+        <label class="eng"><input type="radio" name="img-eng" value="codex">
+          <b>Codex 自动画</b><small>Codex 设计框架图数据 + 用 SVG 画插画</small><i id="ie-codex"></i></label>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="btn-produce">一键生产：配图 + 卡片 + 排版</button>
+        <button class="btn ghost" id="btn-rerender" disabled>只重新排版</button>
+      </div>
+      <div class="console hidden" id="media-console"><div class="console-h"><span id="media-status">运行中</span><span id="media-sec"></span></div><ol id="media-log"></ol></div>
+      <h3 class="sub">配图位 <span class="muted" id="slot-count"></span></h3>
+      <p class="muted small">点「替换」上传本地图片，或者先选中一张卡片再 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴截图。</p>
+      <div class="slots" id="slots"><div class="muted">一键生产后这里会列出每个配图位</div></div>
+      <input type="file" id="slot-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+    </section>
+
+    <!-- 4. publish -->
+    <section class="panel" data-panel="publish">
+      <header class="panel-h"><h2>发布</h2><p>先过一遍自检，再复制到平台。</p></header>
+      <ul class="checklist" id="review-list"></ul>
+      <div class="pub-grid">
+        <div class="pub-card">
+          <h4>微信公众号</h4>
+          <button class="btn primary block" id="btn-wc-draft">存入公众号草稿箱</button>
+          <button class="btn block" id="btn-wc-copy">复制富文本</button>
+          <button class="btn ghost block" id="btn-wc-open">打开公众号后台</button>
+        </div>
+        <div class="pub-card">
+          <h4>小红书</h4>
+          <button class="btn primary block" id="btn-xhs-copy">复制文案</button>
+          <button class="btn ghost block" id="btn-xhs-open">打开创作平台</button>
+        </div>
+      </div>
+      <div class="console hidden" id="pub-console"><div class="console-h"><span>运行中</span><span></span></div><ol></ol></div>
+      <div class="row"><button class="btn" id="btn-archive">标记完成并归档</button></div>
+    </section>
+  </main>
+
+  <!-- preview -->
+  <aside class="preview">
+    <div class="tabs" role="tablist">
+      <button class="on" data-tab="article">公众号</button>
+      <button data-tab="xhs">小红书 <span id="xhs-count"></span></button>
+      <button data-tab="draft">稿件信息</button>
+    </div>
+    <div class="pane" data-pane="article">
+      <div class="phone"><iframe id="pv-frame" title="公众号预览"></iframe><div class="pv-empty" id="pv-article-empty">排版完成后在这里预览</div></div>
+      <img id="pv-cover" class="pv-cover" alt="公众号封面" hidden>
+      <div class="row small"><a class="muted" id="pv-render-link" target="_blank" href="#">新窗口打开 ↗</a><a class="muted" id="pv-single-link" href="#" download hidden>⇩ 下载单文件 HTML（图片内嵌，可直接转发）</a></div>
+    </div>
+    <div class="pane hidden" data-pane="xhs">
+      <div class="cards" id="pv-cards"></div>
+      <div class="xhs-meta"><div id="pv-xhs-titles"></div><div class="chips" id="pv-tags"></div></div>
+    </div>
+    <div class="pane hidden" data-pane="draft">
+      <div class="topic-card" id="pv-topic"><b id="pv-topic-title"></b><p id="pv-topic-meta"></p></div>
+      <div class="stats" id="pv-draft-stats"></div>
+    </div>
+  </aside>
 </div>
 
-<div id="toast" class="toast"></div>
+<!-- settings -->
+<dialog id="settings" class="dlg">
+  <form method="dialog" id="settings-form">
+    <header><h3>设置</h3><button class="btn ghost sm icon" value="cancel" aria-label="关闭">✕</button></header>
+    <p class="muted small">保存到项目根目录的 <code>.env</code>（不会提交到 Git）。密钥只写不读，留空表示不修改，填 <code>-</code> 表示清除。</p>
+    <div id="settings-fields" class="settings-grid"></div>
+    <details class="presets"><summary>常用接口地址</summary>
+      <ul>
+        <li>美的 AIMP：<code>https://aimpapi.midea.com/t-aigc/aimp-deepseek-v4-pro/v1</code> · <code>deepseek-v4-pro</code>（msk- 开头的 Key）</li>
+        <li>DeepSeek：<code>https://api.deepseek.com/v1</code> · <code>deepseek-chat</code></li>
+        <li>通义千问：<code>https://dashscope.aliyuncs.com/compatible-mode/v1</code> · <code>qwen-plus</code></li>
+        <li>Kimi：<code>https://api.moonshot.cn/v1</code> · <code>moonshot-v1-32k</code></li>
+        <li>OpenAI 生图：<code>https://api.openai.com/v1</code> · <code>gpt-image-1</code></li>
+        <li>豆包生图：<code>https://ark.cn-beijing.volces.com/api/v3</code> · <code>doubao-seedream-3-0-t2i-250415</code></li>
+        <li>Codex 命令：已全局安装填 <code>codex</code>，否则 <code>npx -y @openai/codex</code>，首次需 <code>codex login</code></li>
+      </ul>
+    </details>
+    <footer><button class="btn ghost" value="cancel">取消</button><button class="btn primary" id="settings-save" value="default">保存</button></footer>
+  </form>
+</dialog>
+
+<!-- editor -->
+<dialog id="editor" class="dlg wide">
+  <header><h3>编辑稿件</h3>
+    <div class="seg sm" id="ed-seg"><button class="on" data-f="wechat_md">公众号</button><button data-f="xhs_md">小红书</button></div>
+  </header>
+  <div class="row ed-tools">
+    <input class="input" id="ed-term" placeholder="要解释的概念，如：美债收益率倒挂（也可先在正文里选中）" style="flex:1">
+    <button class="btn" id="ed-explain" type="button">用十分吸引解释并插入</button>
+  </div>
+  <textarea class="ta mono" id="ed-text" rows="24"></textarea>
+  <footer><button class="btn ghost" id="ed-cancel">取消</button><button class="btn primary" id="ed-save">保存并重新排版</button></footer>
+</dialog>
+
+<div class="lb" id="lb" hidden><img id="lb-img" alt=""><div id="lb-cap"></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/web/app.js"></script>
 </body>
 </html>
