@@ -101,9 +101,9 @@ def gen_mood(query, out_dir, idx):
 CHART_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 :root{{--bg:#FAF9F5;--fg:#141413;--muted:#87867F;--border:#E3DACC;--accent:#C96442;--accent-d:#B04A3F}}
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:var(--bg);font-family:"Noto Sans SC","Microsoft YaHei",sans-serif;color:var(--fg)}}
+body{{background:var(--bg);font-family:"Microsoft YaHei","微软雅黑","PingFang SC",sans-serif;color:var(--fg)}}
 #figure{{width:{width}px;background:var(--bg);padding:36px 40px 30px}}
-.ct{{font-family:"Noto Serif SC",serif;font-size:26px;font-weight:700;margin-bottom:6px}}
+.ct{{font-family:"Microsoft YaHei","微软雅黑","PingFang SC",sans-serif;font-size:26px;font-weight:700;margin-bottom:6px}}
 .cs{{font-size:15px;color:var(--muted);margin-bottom:26px}}
 svg{{display:block}}
 .axis{{stroke:var(--border);stroke-width:1}}
@@ -237,8 +237,42 @@ def gen_chart(chart, out_dir, idx):
             pass
 
 
-def generate_media(pid, wechat_md, figures=None, charts=None):
-    """Generate all media for a draft. Returns manifest list aligned to placeholders."""
+def gen_ai_image(entry, out_dir, idx, title=""):
+    """MOOD/any slot -> AI image via OpenAI-compatible images API."""
+    from . import imagegen
+
+    try:
+        f = imagegen.generate(imagegen.build_prompt(entry, title), os.path.join(out_dir, f"ai_{idx:02d}"))
+        return {"ok": True, "file": f, "log": "", "engine": "ai"}
+    except RuntimeError as e:
+        return {"ok": False, "file": None, "log": str(e)[:300], "engine": "ai"}
+
+
+def screenshot_html(html_path, out_png, width=1080):
+    """Screenshot #figure (or whole page) of a local html file."""
+    from playwright.sync_api import sync_playwright
+
+    url = "file:///" + os.path.abspath(html_path).replace("\\", "/")
+    with sync_playwright() as p:
+        b = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+        pg = b.new_page(viewport={"width": width, "height": 800}, device_scale_factor=2)
+        pg.goto(url, timeout=20000)
+        pg.wait_for_load_state("networkidle", timeout=15000)
+        el = pg.query_selector("#figure")
+        (el or pg).screenshot(path=out_png, **({} if el else {"full_page": True}))
+        b.close()
+    return out_png
+
+
+ENGINES = ("stock", "ai")  # per-run engine for MOOD slots; codex handled in app
+
+
+def generate_media(pid, wechat_md, figures=None, charts=None, mood_engine="stock",
+                   title="", keep=None, logf=None):
+    """Generate all media for a draft. Returns manifest list aligned to placeholders.
+    keep: {placeholder raw text: entry} manually supplied images to preserve."""
+    logf = logf or (lambda m: None)
+    keep = keep or {}
     figures = figures or []
     charts = charts or []
     fig_by_id = {str(f.get("id")): f for f in figures}
@@ -259,6 +293,12 @@ def generate_media(pid, wechat_md, figures=None, charts=None):
             "ok": False,
             "log": "",
         }
+        logf(f"[{i}/{len(placeholders)}] {ph['type']} {ph['caption'] or ph['key']}")
+        kept = keep.get(ph["raw"])
+        if kept and kept.get("file") and os.path.exists(kept["file"]):
+            entry.update({"ok": True, "file": kept["file"], "engine": kept.get("engine", "manual"), "log": ""})
+            manifest.append(entry)
+            continue
         if ph["type"] == "FIGURE":
             fig = fig_by_id.get(ph["key"]) or (
                 figures[i - 1] if i - 1 < len(figures) else None
@@ -270,8 +310,11 @@ def generate_media(pid, wechat_md, figures=None, charts=None):
                 entry["log"] = f"no figure data for id={ph['key']}"
         elif ph["type"] == "MOOD":
             mood_n += 1
-            r = gen_mood(ph["key"], out_dir, mood_n)
-            entry.update(r)
+            if mood_engine == "ai":
+                entry.update(gen_ai_image(entry, out_dir, i, title))
+            else:
+                entry.update(gen_mood(ph["key"], out_dir, mood_n))
+                entry.setdefault("engine", "stock")
         elif ph["type"] == "CHART":
             ch = chart_by_id.get(ph["key"]) or (
                 charts[i - 1] if i - 1 < len(charts) else None
@@ -281,5 +324,8 @@ def generate_media(pid, wechat_md, figures=None, charts=None):
                 entry.update(r)
             else:
                 entry["log"] = f"no chart data for id={ph['key']}"
+        entry.setdefault("engine", "template")
+        if not entry["ok"]:
+            logf(f"  ✗ {entry['log'][:120]}")
         manifest.append(entry)
     return manifest

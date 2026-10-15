@@ -25,7 +25,8 @@ def _read_ref(name):
     path = os.path.join(config.REFERENCES_DIR, name)
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+            # style docs were written for the original column; use current brand
+            return f.read().replace("巨人之上", config.brand())
     return ""
 
 
@@ -161,7 +162,7 @@ def generate_brief(topic, extra_notes=""):
     if config.is_finance(title + " " + summary):
         finance_note = f"\n> ⚠️ 本文涉及财经，正文末尾必须加免责声明：「{config.FINANCE_DISCLAIMER}」\n"
 
-    brief = f"""# 「巨人之上」双平台创作简报
+    brief = f"""# 「{config.brand()}」双平台创作简报
 
 把这份简报整段复制给任意 AI（ws / Codex / 通义 / Kimi / 豆包网页版均可），
 让它按末尾「输出格式」产出稿件，再把 AI 的完整回复粘回工作台「回填稿件」步骤。
@@ -183,7 +184,7 @@ def generate_brief(topic, extra_notes=""):
 {finance_note}
 ## 三、账号定位（务必遵守）
 
-{wechat_pos or '频道「巨人之上」：给AI时代想借力提效的普通人（非开发者），主张"不自己造轮子，先找别人造好的缆车"。'}
+{wechat_pos or '频道「{config.brand()}」：给AI时代想借力提效的普通人（非开发者），主张"不自己造轮子，先找别人造好的缆车"。'}
 
 ## 四、公众号长文要求
 

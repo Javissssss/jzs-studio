@@ -60,9 +60,10 @@ def _build_figure_html(src, caption):
     )
 
 
-def render_article(wechat_md, manifest, topic=None, column="巨人之上"):
+def render_article(wechat_md, manifest, topic=None, column=None):
     """Render full wechat HTML. manifest = list from media.generate_media (ordered)."""
     topic = topic or {}
+    column = column or config.brand()
     wechat_md = wechat_md or ""
 
     # Build placeholder -> file queue (consume in order of appearance)

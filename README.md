@@ -1,15 +1,19 @@
-# 巨人之上 · 内容工作台
+# 一稿 · 内容工作台
 
 [![CI](https://github.com/Javissssss/jzs-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Javissssss/jzs-studio/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.10%2B-C96442)
+![Python](https://img.shields.io/badge/python-3.10%2B-4F46E5)
 ![License](https://img.shields.io/badge/license-MIT-87867F)
 
-**一篇内容，两个平台。** 本地运行的 Web 工作台：从热榜选题，到公众号长文和小红书图文的配图、排版、存草稿，全程 4 步完成。
+**一次创作，双平台分发。** 本地运行的 Web 工作台：选题 → 写稿 → 配图排版 → 发布，公众号长文和小红书图文一条线做完。
 
-- **不绑定 AI**：工作台生成「创作简报」，你可以交给任意 AI（Codex / Kimi / 通义 / 豆包…）写稿，再把回复粘回来
-- **配图全自动**：框架图、氛围图、数据图和小红书卡片一键生成。AI 漏写配图位时自动补位
-- **人守红线**：只做到「存草稿」，正式发表由你亲手点。财经题自动加免责声明
-- **密钥不出本机**：API Key 只从环境变量读取，不写入任何文件
+## 三种写稿方式 × 三种配图方式
+
+| | API 调用 | Codex 自动执行 | 手动 |
+|---|---|---|---|
+| **写稿** | 任意 OpenAI 兼容模型（DeepSeek / 通义 / Kimi / OpenAI）直接写全文 | 后台跑 `codex exec`，用你的 Codex 登录写稿，实时看日志 | 复制简报给任意 AI，把回复粘回来 |
+| **配图** | 生图 API（gpt-image / 豆包 Seedream / SiliconFlow）按图说生成；或 Pexels 图库搜图 | Codex 设计框架图数据 + 用 SVG 画插画，自动截图入稿 | 每个配图位单独「替换」上传或 Ctrl+V 粘贴截图 |
+
+框架图、数据图、小红书卡片始终由模板自动生成；AI 漏写配图位会自动补位。
 
 ## 快速开始
 
@@ -19,70 +23,46 @@
 | macOS / Linux | `chmod +x run.sh && ./run.sh` |
 | 手动 | `pip install -r requirements.txt && python -m playwright install chromium && python app.py` |
 
-首次运行会自动安装依赖并下载浏览器内核（约 2–3 分钟）。完成后会自动打开 <http://127.0.0.1:8770>。
+打开 <http://127.0.0.1:8770>，点右上角 **⚙ 设置** 填模型地址和 Key（保存在本地 `.env`，不入库，页面不回显）。
 
-## 四步流程
+## 配置项
 
-| 步 | 你做什么 | 工作台做什么 |
-|---|---|---|
-| 1 选题 | 选择来源（微博 / 头条 / 百度 / 手动 / 指定），点「选定」 | 抓取热榜，按「AI · 财经 · 效率」定位评分排序 |
-| 2 简报 & 回填 | 把简报粘给 AI，再把回复粘回来（Ctrl+Enter） | 生成简报并复制，解析双平台稿件，自动补配图位 |
-| 3 一键生产 | 点一个按钮 | 配图 → 小红书卡片 → 砖红米白排版，右侧实时预览 |
-| 4 确认 & 存草稿 | 看自检清单，复制粘贴到平台 | 复制富文本和文案，打开平台后台，打包 zip 下载 |
-
-稿件可以随时点「编辑稿件」修改，保存后会自动重新排版。
-
-## AI 回复格式
-
-简报末尾已经写好了格式要求，AI 照着输出即可。工作台按以下标记解析：
-
-```text
-===WECHAT_START===      公众号正文 Markdown（## 小节）
-===XHS_START===         小红书正文
-===XHS_TITLE_START===   小红书标题，每行一个
-===XHS_TAGS_START===    #标签
-===FIGURES_START===     框架图 JSON 数组
-===CHARTS_START===      数据图 JSON 数组
-（每块以对应的 _END=== 结尾）
-```
-
-正文占位符：`[FIGURE:f1] 图说`、`[MOOD:english query] 图说`、`[CHART:c1] 图说`、`[CLOSE]…[/CLOSE]`。
-
-没有标记也能用，整段回复会被当作公众号正文。
-
-## 配置
-
-复制 `.env.example` 查看全部变量，均为可选：
+全部可选，在设置页填或写进 `.env`（见 `.env.example`）：
 
 | 变量 | 作用 |
 |---|---|
-| `PEXELS_API_KEY` | 氛围图素材源（[免费申请](https://www.pexels.com/api/)）。不设置时只影响氛围图 |
-| `UNSPLASH_ACCESS_KEY` | 备用素材源 |
-| `JZS_WORKSPACE` | 草稿目录，默认 `./workspace`（不入库） |
+| `JZS_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | 写作模型 |
+| `JZS_IMAGE_BASE_URL` / `_API_KEY` / `_MODEL` / `_SIZE` | 生图模型 |
+| `JZS_CODEX_CMD` | Codex 命令，默认找 PATH 里的 `codex`；没装可填 `npx -y @openai/codex` |
+| `JZS_CODEX_TIMEOUT` | Codex 单次超时秒数，默认 600 |
+| `JZS_BRAND` | 栏目名，印在文章眉题和卡片页脚 |
+| `PEXELS_API_KEY` | 图库搜图 |
+| `JZS_WORKSPACE` | 草稿目录，默认 `./workspace` |
 
-发布辅助（复制富文本、打开后台）需要 `npm i -g agent-browser`（Node 18+）。首次使用需扫码登录。
+Codex 需先装好并登录一次：`npm i -g @openai/codex && codex login`。工作台以 `--sandbox workspace-write` 在每个项目的独立目录里运行它。
 
-> 服务默认只监听 `127.0.0.1`，且没有登录鉴权。不要用 `--host 0.0.0.0` 暴露到公网。
+> 服务只监听 `127.0.0.1`，没有登录鉴权，不要用 `--host 0.0.0.0` 暴露到公网。
 
 ## 项目结构
 
 ```text
-app.py              Flask 服务 + REST API
-core/               流水线：topics 选题 · brief 简报/解析 · enrich 配图补位
-                    media 配图 · cards 小红书卡片 · render 排版 · publish 发布辅助
-web/                单页工作台（原生 JS，无构建）
-skill/              可独立复用的内容技能包（脚本 / 模板 / 文风规范）
-tests/              离线单测 + API 测试
+app.py        Flask 服务 + REST API；写稿/配图走后台任务，前端轮询日志
+core/         topics 选题 · brief 简报/解析 · llm 写作 API · codex Codex CLI
+              imagegen 生图 API · media 配图 · cards 卡片 · render 排版
+              jobs 后台任务 · settings 设置页 · publish 发布辅助
+web/          单页工作台（原生 JS，无构建）
+skill/        可独立复用的内容技能包
+tests/        离线测试（mock 模型服务 + 假 Codex，不需要网络）
 ```
 
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v    # 离线测试，不需要网络和浏览器
+python -m unittest discover -s tests -v
 python app.py --debug
 ```
 
-每次 push 和 PR 都会触发 GitHub Actions，在 Ubuntu 和 Windows 上分别跑测试。
+push 和 PR 会在 Ubuntu / Windows 上跑 CI。
 
 ## License
 

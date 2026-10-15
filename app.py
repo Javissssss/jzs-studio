@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
-"""jzs-studio Flask server. Orchestrates the 8-stage dual-platform pipeline.
+"""一稿 (jzs-studio) Flask server: topic -> draft -> images -> layout -> publish.
 Run: python app.py  (then open http://127.0.0.1:8770)"""
 
+import json
 import os
 import re
+import time
 import traceback
 
 from flask import Flask, jsonify, request, send_from_directory, abort
 from werkzeug.exceptions import HTTPException
 
 from core import config, state, topics, brief, enrich, llm, media, render, cards, publish
+from core import codex, imagegen, jobs, settings as app_settings
 
 app = Flask(__name__, static_folder=None)
 config.ensure_dirs()
@@ -216,24 +219,80 @@ def api_draft_fill(pid):
     return jsonify(_apply_ai_output(pid, s, ai_output, b))
 
 
+CODEX_WRITE_TAIL = """
+
+---
+你在本地以 Codex 身份执行：不要修改任何文件，不要运行命令，
+直接把完整稿件作为最终回复输出（只含上面「输出格式」里的标记块）。
+"""
+
+
+def _writer(pid, engine, extra_notes):
+    """Return fn(logf) that writes the full draft with the chosen engine."""
+
+    def fn(logf):
+        s = _load_or_404(pid)
+        topic = s.get("topic") or {}
+        brief_md = brief.generate_brief(topic, extra_notes=extra_notes)
+        with open(os.path.join(config.project_dir(pid), "brief.md"), "w", encoding="utf-8") as f:
+            f.write(brief_md)
+        logf(f"简报已生成（{len(brief_md)} 字）")
+        if engine == "codex":
+            text = codex.run(brief_md + CODEX_WRITE_TAIL, os.path.join(config.project_dir(pid), "codex"), logf)
+            model = "Codex"
+        else:
+            logf(f"调用 {llm.settings()['model']} 写稿中…")
+            text = llm.write_draft(brief_md)
+            model = llm.settings()["model"]
+        if not text.strip():
+            raise RuntimeError("引擎没有返回内容")
+        logf(f"收到 {len(text)} 字，解析中")
+        out = _apply_ai_output(pid, state.load(pid), text)
+        out["model"] = model
+        out["project"] = None  # client refetches
+        return out
+
+    return fn
+
+
+def _start_job(kind, pid, fn):
+    """Start a background job, or run inline when ?wait=1 (tests, scripts)."""
+    if request.args.get("wait") == "1":
+        try:
+            result, log = jobs.run_sync(fn)
+        except RuntimeError as e:
+            return jsonify({"ok": False, "error": str(e)}), 502
+        return jsonify({"ok": True, "status": "done", "result": result, "log": log})
+    try:
+        job = jobs.start(kind, pid, fn)
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+    return jsonify({"ok": True, "job": jobs.public(job)})
+
+
 @app.route("/api/projects/<pid>/draft/write", methods=["POST"])
 def api_draft_write(pid):
-    """Built-in writer: brief -> configured LLM -> full draft, one click."""
+    """Write the full draft. engine: api (OpenAI-compatible) | codex (codex exec)."""
     s = _load_or_404(_safe_pid(pid))
-    topic = s.get("topic") or {}
-    if not topic.get("title"):
+    if not (s.get("topic") or {}).get("title"):
         return jsonify({"ok": False, "error": "请先选定题目"}), 400
     b = _body()
-    brief_md = brief.generate_brief(topic, extra_notes=b.get("extra_notes", ""))
-    with open(os.path.join(config.project_dir(pid), "brief.md"), "w", encoding="utf-8") as f:
-        f.write(brief_md)
-    try:
-        text = llm.write_draft(brief_md)
-    except RuntimeError as e:
-        return jsonify({"ok": False, "error": str(e)}), 502
-    out = _apply_ai_output(pid, s, text)
-    out["model"] = llm.settings()["model"]
-    return jsonify(out)
+    engine = b.get("engine", "api")
+    if engine not in ("api", "codex"):
+        return jsonify({"ok": False, "error": "engine 只能是 api / codex"}), 400
+    if engine == "api" and not llm.is_configured():
+        return jsonify({"ok": False, "error": "未配置写作模型：点右上角「设置」填写 Base URL / API Key / 模型"}), 502
+    if engine == "codex" and not codex.find_cmd():
+        return jsonify({"ok": False, "error": "没找到 codex 命令：npm i -g @openai/codex 后 codex login，或在设置里填 Codex 命令"}), 502
+    return _start_job("write", pid, _writer(pid, engine, b.get("extra_notes", "")))
+
+
+@app.route("/api/jobs/<jid>", methods=["GET"])
+def api_job(jid):
+    job = jobs.get(jid)
+    if not job:
+        abort(404, description="job not found")
+    return jsonify({"ok": True, "job": jobs.public(job, int(request.args.get("since", 0)))})
 
 
 @app.route("/api/projects/<pid>/draft", methods=["GET"])
@@ -258,14 +317,32 @@ def api_draft_edit(pid):
 
 
 # ---------- stage 4+5: media & render ----------
-def _do_media(pid, s):
+def _keep_manual(s):
+    """Manually supplied images survive regeneration (keyed by placeholder)."""
+    return {m["raw"]: m for m in s.get("media", {}).get("manifest", []) if m.get("engine") == "manual" and m.get("ok")}
+
+
+def _do_media(pid, s, mood_engine="stock", logf=None):
     """Generate article images + XHS cards. Mutates and saves state."""
+    logf = logf or (lambda m: None)
     d = s.get("draft", {})
+    if mood_engine == "codex":
+        try:
+            _codex_art(pid, s, logf)
+        except RuntimeError as e:  # fall back to stock images, never lose the whole run
+            logf(f"✗ Codex 失败，氛围图改用图库：{e}"[:300])
+            mood_engine = "stock"
+        d = s.get("draft", {})
     manifest = media.generate_media(
-        pid, d["wechat_md"], figures=d.get("figures", []), charts=d.get("charts", [])
+        pid, d["wechat_md"], figures=d.get("figures", []), charts=d.get("charts", []),
+        mood_engine="ai" if mood_engine == "ai" else "stock",
+        title=s.get("topic", {}).get("title", ""), keep=_keep_manual(s), logf=logf,
     )
+    if mood_engine == "codex":
+        _apply_codex_art(pid, manifest, logf)
     card_info = {"ok": False, "pngs": [], "log": "skipped (no xhs draft)"}
     if d.get("xhs_md"):
+        logf("生成小红书卡片…")
         try:
             card_info = cards.generate_cards(
                 pid, d["xhs_md"], d.get("xhs_titles", []), d.get("xhs_tags", [])
@@ -274,14 +351,98 @@ def _do_media(pid, s):
             card_info = {"ok": False, "pngs": [], "log": str(e)[:200]}
     s["media"] = {
         "manifest": manifest,
+        "engine": mood_engine,
         "cards": card_info.get("pngs", []),
         "cards_ok": card_info.get("ok"),
         "cards_log": card_info.get("log", ""),
     }
     ok_count = sum(1 for m in manifest if m.get("ok"))
-    state.log(s, f"media: {ok_count}/{len(manifest)} images, {len(s['media']['cards'])} cards")
+    logf(f"配图 {ok_count}/{len(manifest)} · 卡片 {len(s['media']['cards'])} 张")
+    state.log(s, f"media({mood_engine}): {ok_count}/{len(manifest)} images, {len(s['media']['cards'])} cards")
     s["stage"] = "render"
     state.save(pid, s)
+
+
+CODEX_ART_PROMPT = """你是公众号插画师兼信息设计师。当前目录是一个空工作目录，请直接在这里写文件，不要联网。
+
+文章标题：{title}
+
+任务一（框架图数据）：为下列框架图占位符写出结构化数据，保存为 figures.json（JSON 数组）：
+{fig_list}
+每项格式 {{"id","kind","caption","data"}}，kind 取 flow/compare/checklist/timeline，data schema：
+- flow: {{"title","subtitle","steps":[{{"label","desc"}}]}}（3-5 步）
+- compare: {{"title","subtitle","left":{{"name","items":[str]}},"right":{{"name","items":[str]}}}}
+- checklist: {{"title","subtitle","items":[{{"text","note"}}]}}
+- timeline: {{"title","subtitle","events":[{{"date","text"}}]}}
+内容要紧扣下面正文，不要空泛。没有框架图占位符就写 []。
+
+任务二（插画）：为下列配图位各画一张插画，每张一个文件 slot_<序号>.html：
+{mood_list}
+要求：纯 HTML + 内联 SVG/CSS，不引用任何外部资源和字体文件；根元素 <div id="figure" style="width:1080px;height:608px">；
+扁平编辑插画风，配色克制（主色不超过 3 个），画面里不放大段文字；字体只用 "Microsoft YaHei"。
+
+正文（节选）：
+{body}
+
+全部写完后，最终回复只需一行：DONE
+"""
+
+
+def _codex_art(pid, s, logf):
+    """Let Codex design missing framework data + draw SVG illustrations for MOOD slots."""
+    d = s.get("draft", {})
+    phs = media.parse_placeholders(d.get("wechat_md", ""))
+    have = {str(f.get("id")) for f in d.get("figures", []) if f.get("data")}
+    figs = [p for p in phs if p["type"] == "FIGURE" and p["key"] not in have]
+    moods = [(i, p) for i, p in enumerate(phs, 1) if p["type"] == "MOOD"]
+    keep = _keep_manual(s)
+    moods = [(i, p) for i, p in moods if p["raw"] not in keep]
+    if not figs and not moods:
+        logf("Codex：没有需要它处理的配图位")
+        return
+    wd = os.path.join(config.project_dir(pid), "codex_art")
+    if os.path.isdir(wd):
+        import shutil
+
+        shutil.rmtree(wd, ignore_errors=True)
+    prompt = CODEX_ART_PROMPT.format(
+        title=s.get("topic", {}).get("title", ""),
+        fig_list="\n".join(f"- id={p['key']}：{p['caption']}" for p in figs) or "（无）",
+        mood_list="\n".join(f"- 序号 {i:02d}：{p['caption'] or p['key']}（意象：{p['key']}）" for i, p in moods) or "（无）",
+        body=d.get("wechat_md", "")[:6000],
+    )
+    logf(f"Codex 设计 {len(figs)} 张框架图、绘制 {len(moods)} 张插画…")
+    codex.run(prompt, wd, logf, writable=True)
+    fj = os.path.join(wd, "figures.json")
+    if os.path.exists(fj):
+        try:
+            with open(fj, encoding="utf-8") as f:
+                new = [x for x in json.load(f) if isinstance(x, dict) and x.get("id")]
+            byid = {str(x.get("id")): x for x in d.get("figures", [])}
+            byid.update({str(x["id"]): x for x in new})
+            d["figures"] = list(byid.values())
+            s["draft"] = d
+            logf(f"Codex 框架图数据 {len(new)} 份")
+        except (ValueError, OSError) as e:
+            logf(f"figures.json 解析失败：{e}")
+
+
+def _apply_codex_art(pid, manifest, logf):
+    """Screenshot slot_XX.html drawn by Codex into the MOOD slots."""
+    wd = os.path.join(config.project_dir(pid), "codex_art")
+    out_dir = os.path.join(config.project_dir(pid), "output")
+    for i, m in enumerate(manifest, 1):
+        if m["type"] != "MOOD" or m.get("engine") == "manual":
+            continue
+        src = os.path.join(wd, f"slot_{i:02d}.html")
+        if not os.path.exists(src):
+            m.update({"ok": False, "file": None, "engine": "codex", "log": "Codex 没有画这张"})
+            continue
+        try:
+            png = media.screenshot_html(src, os.path.join(out_dir, f"codex_{i:02d}.png"))
+            m.update({"ok": True, "file": png, "engine": "codex", "log": ""})
+        except Exception as e:  # noqa: BLE001
+            m.update({"ok": False, "file": None, "engine": "codex", "log": f"截图失败：{e}"[:300]})
 
 
 def _do_render(pid, s):
@@ -324,10 +485,88 @@ def api_render(pid):
     return _step(pid, _do_render)
 
 
+IMAGE_ENGINES = ("stock", "ai", "codex")
+
+
 @app.route("/api/projects/<pid>/produce", methods=["POST"])
 def api_produce(pid):
-    """One click: images + cards + layout."""
-    return _step(pid, _do_media, _do_render)
+    """One click: images + cards + layout, in the background.
+    image_engine: stock (Pexels 图库) | ai (生图 API) | codex (Codex 画插画+设计框架)"""
+    s = _load_or_404(_safe_pid(pid))
+    if not s.get("draft", {}).get("wechat_md"):
+        return jsonify({"ok": False, "error": "还没有公众号稿件，请先写稿"}), 400
+    eng = _body().get("image_engine", "stock")
+    if eng not in IMAGE_ENGINES:
+        return jsonify({"ok": False, "error": "image_engine 只能是 stock / ai / codex"}), 400
+    if eng == "ai" and not imagegen.is_configured():
+        return jsonify({"ok": False, "error": "未配置生图接口：点右上角「设置」填写"}), 502
+    if eng == "codex" and not codex.find_cmd():
+        return jsonify({"ok": False, "error": "没找到 codex 命令"}), 502
+
+    def fn(logf):
+        st = state.load(pid)
+        _do_media(pid, st, eng, logf)
+        logf("排版中…")
+        _do_render(pid, state.load(pid))
+        meta = state.load(pid)["render"]["meta"]
+        logf(f"排版完成：{meta.get('word_count', 0)} 字 · {meta.get('images', 0)} 图")
+        return {"meta": meta}
+
+    return _start_job("produce", pid, fn)
+
+
+ALLOWED_IMG = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg", "webp": ".webp", "gif": ".gif"}
+
+
+@app.route("/api/projects/<pid>/media/slot/<int:idx>", methods=["POST", "DELETE"])
+def api_media_slot(pid, idx):
+    """Manually set (upload / paste) or clear the image of slot idx (1-based), then re-render."""
+    import base64
+
+    s = _load_or_404(_safe_pid(pid))
+    man = s.get("media", {}).get("manifest", [])
+    if not 1 <= idx <= len(man):
+        return jsonify({"ok": False, "error": "配图位不存在，请先一键生产"}), 400
+    entry = man[idx - 1]
+    if request.method == "DELETE":
+        entry.update({"ok": False, "file": None, "engine": "none", "log": "已移除，重新生产时会自动补图"})
+    else:
+        raw, ext = None, None
+        f = request.files.get("file")
+        if f:
+            ext = ALLOWED_IMG.get((f.filename or "").rsplit(".", 1)[-1].lower())
+            raw = f.read()
+        else:
+            m = re.match(r"data:image/(\w+);base64,(.+)", _body().get("data_url", ""), re.DOTALL)
+            if m:
+                ext, raw = ALLOWED_IMG.get(m.group(1).lower()), base64.b64decode(m.group(2))
+        if not raw or not ext:
+            return jsonify({"ok": False, "error": "只支持 png / jpg / webp / gif 图片"}), 400
+        if len(raw) > 15 * 1024 * 1024:
+            return jsonify({"ok": False, "error": "图片超过 15MB"}), 400
+        path = os.path.join(config.project_dir(pid), "output", f"manual_{idx:02d}_{int(time.time())}{ext}")
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        entry.update({"ok": True, "file": path, "engine": "manual", "log": ""})
+    state.log(s, f"slot {idx} -> {entry['engine']}")
+    state.save(pid, s)
+    _do_render(pid, state.load(pid))
+    return jsonify({"ok": True, "project": _public(state.load(pid))})
+
+
+# ---------- settings ----------
+@app.route("/api/settings", methods=["GET"])
+def api_settings_get():
+    return jsonify({"ok": True, "settings": app_settings.public()})
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_settings_set():
+    try:
+        app_settings.update(_body())
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "settings": app_settings.public()})
 
 
 # ---------- stage 6: review ----------
@@ -457,7 +696,7 @@ def api_export(pid):
     buf.seek(0)
     safe = re.sub(r"[^\w\u4e00-\u9fff-]", "", s.get("title", ""))[:30] or pid
     return send_file(buf, mimetype="application/zip", as_attachment=True,
-                     download_name=f"jzs_{safe}.zip")
+                     download_name=f"yigao_{safe}.zip")
 
 
 # ---------- health ----------
@@ -475,6 +714,10 @@ def api_health():
             "agent_browser": bool(ab) and ab != "agent-browser",
             "playwright": _check_playwright(),
             "llm": llm.public_info(),
+            "imagegen": imagegen.public_info(),
+            "codex": codex.public_info(),
+            "brand": config.brand(),
+            "product": config.PRODUCT_NAME,
             "workspace": config.WORKSPACE_DIR,
         }
     )
@@ -497,6 +740,6 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
-    print(f"[jzs-studio] starting on http://{args.host}:{args.port}")
-    print(f"[jzs-studio] workspace: {config.WORKSPACE_DIR}")
+    print(f"[{config.PRODUCT_NAME}] starting on http://{args.host}:{args.port}")
+    print(f"[{config.PRODUCT_NAME}] workspace: {config.WORKSPACE_DIR}")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)

@@ -2,10 +2,10 @@
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
-title 巨人之上 · 内容工作台
+title 一稿 · 内容工作台
 
 echo ============================================
-echo   巨人之上 · 内容工作台  jzs-studio
+echo   一稿 · 内容工作台  jzs-studio
 echo ============================================
 echo.
 

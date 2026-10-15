@@ -13,8 +13,10 @@ import os
 import urllib.error
 import urllib.request
 
-SYSTEM = (
-    "你是「巨人之上」公众号的主笔。严格按用户简报的文风、结构和「输出格式」写作，"
+from . import config
+
+SYSTEM_TPL = (
+    "你是「{brand}」公众号的主笔。严格按用户简报的文风、结构和「输出格式」写作，"
     "必须输出全部标记块（===WECHAT_START=== 等），公众号正文写满 2500 字以上，"
     "不要输出与稿件无关的解释。"
 )
@@ -46,7 +48,7 @@ def write_draft(brief_md, timeout=300):
     url = s["base_url"] + "/chat/completions"
     payload = {
         "model": s["model"],
-        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": brief_md}],
+        "messages": [{"role": "system", "content": SYSTEM_TPL.format(brand=config.brand())}, {"role": "user", "content": brief_md}],
         "temperature": 0.7,
         "max_tokens": 8000,
     }

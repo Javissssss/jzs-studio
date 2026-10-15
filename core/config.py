@@ -43,6 +43,18 @@ WEB_DIR = os.path.join(PRODUCT_ROOT, "web")
 # Python executable for subprocess calls to skill scripts
 PYTHON = sys.executable or "python"
 
+# Product name (the tool itself) and default column/brand name printed on
+# articles, cards and figures. Brand is user-configurable (JZS_BRAND).
+PRODUCT_NAME = "一稿"
+PRODUCT_TAGLINE = "一次创作 · 双平台分发"
+DEFAULT_BRAND = "一稿"
+FONT_STACK = '"Microsoft YaHei","微软雅黑","PingFang SC","Hiragino Sans GB",sans-serif'
+
+
+def brand():
+    return (os.environ.get("JZS_BRAND") or "").strip() or DEFAULT_BRAND
+
+
 # Design tokens (brick-red / rice-white) - shared with templates
 TOKENS = {
     "bg": "#FAF9F5",

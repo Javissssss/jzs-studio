@@ -47,6 +47,7 @@ def main():
         data = json.loads(args.data)
 
     html = tpl.replace("/*__DATA__*/", json.dumps(data, ensure_ascii=False))
+    html = html.replace("__BRAND__", os.environ.get("JZS_BRAND") or "一稿")
 
     tmp = os.path.join(tempfile.gettempdir(), f"jzs_fig_{args.kind}.html")
     with open(tmp, "w", encoding="utf-8") as f:
