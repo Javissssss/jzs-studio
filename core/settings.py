@@ -20,6 +20,9 @@ FIELDS = {
     "JZS_CODEX_CMD": ("Codex 命令", False),
     "JZS_CODEX_MODEL": ("Codex 模型", False),
     "PEXELS_API_KEY": ("Pexels 图库 Key", True),
+    "JZS_WX_APPID": ("公众号 AppID", False),
+    "JZS_WX_SECRET": ("公众号 AppSecret", True),
+    "JZS_WX_AUTHOR": ("公众号作者名", False),
 }
 ENV_PATH = os.path.join(config.PRODUCT_ROOT, ".env")
 

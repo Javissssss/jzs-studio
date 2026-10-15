@@ -258,7 +258,7 @@ $("btn-write").addEventListener("click", (e) => busy(e.currentTarget, async () =
     if (!r.ok) return toast(r.error || "解析失败", "err");
     return afterDraft(r);
   }
-  const res = await runJob(`/api/projects/${S.pid}/draft/write`, { engine: S.wEngine, extra_notes: $("extra-notes").value.trim() }, "write-console");
+  const res = await runJob(`/api/projects/${S.pid}/draft/write`, { engine: S.wEngine, extra_notes: $("extra-notes").value.trim(), perspective: $("w-persp").value, words: +$("w-words").value || 0 }, "write-console");
   if (!res) return toast("写稿失败，看下方日志", "err");
   await afterDraft(res);
 }));
@@ -421,6 +421,11 @@ const pubAction = (id, path, okMsg) => $(id).addEventListener("click", (e) => bu
   toast(r.msg || (r.ok ? okMsg : r.error || "操作失败"), r.ok ? "ok" : "err");
   if (r.ok && S.project?.stage === "review") { await api(`/api/projects/${S.pid}/approve`, "POST", {}); refresh(false); }
 }));
+$("btn-wc-draft").onclick = async () => {
+  if (!S.health?.wechat_mp?.configured) { toast("先在「设置」里填公众号 AppID / AppSecret", "err"); return; }
+  const res = await runJob(`/api/projects/${S.pid}/publish/wechat/draft`, {}, "pub-console");
+  if (res) toast("已存入公众号草稿箱，去后台「草稿箱」查看", "ok");
+};
 pubAction("btn-wc-copy", "publish/wechat/copy", "富文本已复制，去公众号编辑器 Ctrl+V");
 pubAction("btn-wc-open", "publish/wechat/open", "已打开公众号后台（首次需扫码）");
 pubAction("btn-xhs-copy", "publish/xhs/copy", "文案已复制");

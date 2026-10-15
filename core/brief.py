@@ -137,7 +137,7 @@ def plan_images(topic_title, topic_summary=""):
     return plan
 
 
-def generate_brief(topic, extra_notes=""):
+def generate_brief(topic, extra_notes="", perspective="", words=0):
     """Generate the unified dual-platform creative brief (markdown string)."""
     title = topic.get("title", "")
     summary = topic.get("summary", "")
@@ -162,6 +162,7 @@ def generate_brief(topic, extra_notes=""):
     if config.is_finance(title + " " + summary):
         finance_note = f"\n> ⚠️ 本文涉及财经，正文末尾必须加免责声明：「{config.FINANCE_DISCLAIMER}」\n"
 
+    length = f"约{int(words)}字（±10%），严格控制篇幅" if words else "2500-4000字"
     brief = f"""# 「{config.brand()}」双平台创作简报
 
 把这份简报整段复制给任意 AI（ws / Codex / 通义 / Kimi / 豆包网页版均可），
@@ -172,7 +173,7 @@ def generate_brief(topic, extra_notes=""):
 ## 一、你的任务
 
 围绕下面选定的题目，写两份内容：
-1. **微信公众号长文**（2500-4000字，深度）
+1. **微信公众号长文**（{length}，深度）
 2. **小红书笔记**（正文≤1000字 + 标题×2 + 标签6-8个，降维干货）
 
 ## 二、选定题目
@@ -252,6 +253,10 @@ def generate_brief(topic, extra_notes=""):
 """
     if extra_notes:
         brief += f"\n## 七、额外要求（用户补充）\n\n{extra_notes}\n"
+    if perspective:
+        from . import perspective as _pv
+
+        brief += _pv.brief_block(perspective, f"{title} {summary} {angle}")
     return brief
 
 

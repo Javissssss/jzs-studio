@@ -7,6 +7,7 @@ Placeholder types in wechat draft:
   [CHART:id] caption   -> data chart via embedded SVG template + playwright
 """
 
+import html
 import json
 import os
 import re
@@ -128,6 +129,8 @@ def _chart_svg(ctype, data, width=900, height=420):
     vals = [float(d.get("value", 0)) for d in data] or [0]
     labels = [str(d.get("time") or d.get("category") or "") for d in data]
     vmax, vmin = max(vals), min(vals)
+    if ctype in ("bar", "column") and vmin > 0:
+        vmin = 0  # bars must start at zero, otherwise heights lie
     if vmax == vmin:
         vmax = vmin + 1
     span = vmax - vmin
@@ -141,7 +144,7 @@ def _chart_svg(ctype, data, width=900, height=420):
             f'<line class="grid" x1="{pad_l}" y1="{y:.1f}" x2="{pad_l + iw}" y2="{y:.1f}"/>'
         )
         parts.append(
-            f'<text class="lbl" x="{pad_l - 10}" y="{y + 4:.1f}" text-anchor="end">{gv:.0f}</text>'
+            f'<text class="lbl" x="{pad_l - 10}" y="{y + 4:.1f}" text-anchor="end">{gv:.{0 if span >= 8 else 1}f}</text>'
         )
     parts.append(
         f'<line class="axis" x1="{pad_l}" y1="{pad_t + ih}" x2="{pad_l + iw}" y2="{pad_t + ih}"/>'
@@ -182,7 +185,7 @@ def _chart_svg(ctype, data, width=900, height=420):
     # x labels
     for i, lb in enumerate(labels):
         parts.append(
-            f'<text class="lbl" x="{xpos(i):.1f}" y="{pad_t + ih + 24:.1f}" text-anchor="middle">{lb[:8]}</text>'
+            f'<text class="lbl" x="{xpos(i):.1f}" y="{pad_t + ih + 24:.1f}" text-anchor="middle">{html.escape(lb[: max(6, int(iw / n / 15))])}</text>'
         )
     parts.append("</svg>")
     return "".join(parts)

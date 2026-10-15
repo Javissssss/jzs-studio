@@ -12,7 +12,7 @@ from flask import Flask, jsonify, request, send_from_directory, abort
 from werkzeug.exceptions import HTTPException
 
 from core import config, state, topics, brief, enrich, llm, media, render, cards, publish
-from core import codex, imagegen, jobs, settings as app_settings
+from core import codex, imagegen, jobs, perspective, wechat_mp, settings as app_settings
 
 app = Flask(__name__, static_folder=None)
 config.ensure_dirs()
@@ -227,13 +227,15 @@ CODEX_WRITE_TAIL = """
 """
 
 
-def _writer(pid, engine, extra_notes):
+def _writer(pid, engine, extra_notes, perspective="", words=0):
     """Return fn(logf) that writes the full draft with the chosen engine."""
 
     def fn(logf):
         s = _load_or_404(pid)
         topic = s.get("topic") or {}
-        brief_md = brief.generate_brief(topic, extra_notes=extra_notes)
+        brief_md = brief.generate_brief(topic, extra_notes=extra_notes, perspective=perspective, words=words)
+        if perspective:
+            logf("已嵌入写作视角：" + perspective)
         with open(os.path.join(config.project_dir(pid), "brief.md"), "w", encoding="utf-8") as f:
             f.write(brief_md)
         logf(f"简报已生成（{len(brief_md)} 字）")
@@ -284,7 +286,8 @@ def api_draft_write(pid):
         return jsonify({"ok": False, "error": "未配置写作模型：点右上角「设置」填写 Base URL / API Key / 模型"}), 502
     if engine == "codex" and not codex.find_cmd():
         return jsonify({"ok": False, "error": "没找到 codex 命令：npm i -g @openai/codex 后 codex login，或在设置里填 Codex 命令"}), 502
-    return _start_job("write", pid, _writer(pid, engine, b.get("extra_notes", "")))
+    return _start_job("write", pid, _writer(pid, engine, b.get("extra_notes", ""),
+                                            b.get("perspective", ""), int(b.get("words") or 0)))
 
 
 @app.route("/api/jobs/<jid>", methods=["GET"])
@@ -623,6 +626,35 @@ def api_wechat_copy(pid):
     return jsonify({"ok": ok, "msg": msg})
 
 
+@app.route("/api/projects/<pid>/publish/wechat/draft", methods=["POST"])
+def api_wechat_draft(pid):
+    """Save the rendered article into the Official Account draft box (API)."""
+    s = _load_or_404(_safe_pid(pid))
+    d = s.get("draft", {})
+    man = s.get("media", {}).get("manifest", [])
+    if not d.get("wechat_md") or not s.get("render"):
+        return jsonify({"ok": False, "error": "请先一键生产（配图+排版）"}), 400
+    if not wechat_mp.is_configured():
+        return jsonify({"ok": False, "error": "未配置公众号：点右上角「设置」填写 AppID / AppSecret，并把本机公网 IP 加进白名单"}), 502
+    b = _body()
+
+    def fn(logf):
+        st = state.load(pid)
+        meta = st["render"]["meta"]
+        title = b.get("title") or meta.get("title") or st.get("topic", {}).get("title", "")
+        cover = b.get("cover") or next((m["file"] for m in man if m.get("ok") and m["type"] == "MOOD"), None) \
+            or next((m["file"] for m in man if m.get("ok")), None)
+        r = wechat_mp.publish_draft(st["draft"]["wechat_md"], man, title, b.get("digest") or meta.get("lead", ""),
+                                    cover, os.path.join(config.project_dir(pid), "output"), logf)
+        st.setdefault("publish", {})["wechat_draft"] = {"media_id": r["media_id"], "at": time.time()}
+        state.log(st, f"wechat draft saved: {r['media_id']}")
+        state.save(pid, st)
+        logf(f"已存入草稿箱（{r['images']} 张正文图 + 封面）")
+        return r
+
+    return _start_job("wxdraft", pid, fn)
+
+
 @app.route("/api/projects/<pid>/publish/wechat/open", methods=["POST"])
 def api_wechat_open(pid):
     ok, log = publish.open_platform("wechat")
@@ -716,6 +748,8 @@ def api_health():
             "llm": llm.public_info(),
             "imagegen": imagegen.public_info(),
             "codex": codex.public_info(),
+            "wechat_mp": wechat_mp.public_info(),
+            "perspectives": perspective.available(),
             "brand": config.brand(),
             "product": config.PRODUCT_NAME,
             "workspace": config.WORKSPACE_DIR,

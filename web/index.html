@@ -94,6 +94,10 @@
       </div>
 
       <label class="field"><span>补充要求（可选）</span>
+        <div class="row">
+          <label class="small">写作视角 <select id="w-persp"><option value="">默认</option><option value="shifenxiyin">《十分吸引》思维框架</option></select></label>
+          <label class="small">目标字数 <input id="w-words" type="number" min="0" step="500" placeholder="不限" style="width:90px"></label>
+        </div>
         <textarea class="ta" id="extra-notes" rows="2" placeholder="例：多用生活比喻；结尾给 3 条行动清单；面向 30 岁上班族"></textarea>
       </label>
       <div class="row">
@@ -133,7 +137,8 @@
       <div class="pub-grid">
         <div class="pub-card">
           <h4>微信公众号</h4>
-          <button class="btn primary block" id="btn-wc-copy">复制富文本</button>
+          <button class="btn primary block" id="btn-wc-draft">存入公众号草稿箱</button>
+          <button class="btn block" id="btn-wc-copy">复制富文本</button>
           <button class="btn ghost block" id="btn-wc-open">打开公众号后台</button>
         </div>
         <div class="pub-card">
@@ -142,6 +147,7 @@
           <button class="btn ghost block" id="btn-xhs-open">打开创作平台</button>
         </div>
       </div>
+      <div class="console hidden" id="pub-console"><div class="console-h"><span>运行中</span><span></span></div><ol></ol></div>
       <div class="row"><button class="btn" id="btn-archive">标记完成并归档</button></div>
     </section>
   </main>
