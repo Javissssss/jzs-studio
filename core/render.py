@@ -265,7 +265,9 @@ def render_article(wechat_md, manifest, topic=None, column="巨人之上"):
 
     # assemble HTML
     style = _read_template_style()
-    today = time.strftime("%Y年%m月%d日")
+    # format numbers only: strftime with CJK crashes on non-Chinese Windows locales
+    t = time.localtime()
+    today = f"{t.tm_year}年{t.tm_mon:02d}月{t.tm_mday:02d}日"
     parts = []
     parts.append('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">')
     parts.append(
