@@ -20,7 +20,7 @@ FIELDS = {
     "JZS_CODEX_CMD": ("Codex 命令", False),
     "JZS_CODEX_MODEL": ("Codex 模型", False),
     "PEXELS_API_KEY": ("Pexels 图库 Key", True),
-    "ATTRACTOR_API_KEY": ("十分吸引 · 宏观数据 Key（可选）", True),
+    "ATTRACTOR_API_KEY": ("写作视角 · 宏观数据 Key（可选）", True),
     "JZS_WX_APPID": ("公众号 AppID", False),
     "JZS_WX_SECRET": ("公众号 AppSecret", True),
     "JZS_WX_AUTHOR": ("公众号作者名", False),
