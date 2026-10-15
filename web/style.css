@@ -264,3 +264,14 @@ details pre { max-height: 240px; overflow: auto; background: var(--surface-2); p
 .persp-opts{flex-basis:100%;gap:12px;align-items:center}
 .ed-tools{margin:0 0 8px;gap:8px}
 .pv-cover{width:100%;max-width:360px;aspect-ratio:2.35/1;object-fit:cover;border-radius:8px;margin:10px auto 4px;display:block;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+
+/* advanced options fold: keeps the perspective switch out of the main flow */
+details.adv{margin:6px 0 8px}
+details.adv>summary{cursor:pointer;user-select:none;list-style:none;display:inline-block;padding:2px 0}
+details.adv>summary::-webkit-details-marker{display:none}
+details.adv>summary::before{content:"▸ ";}
+details.adv[open]>summary::before{content:"▾ ";}
+details.adv[open] .persp-box{margin-top:6px}
+.linkbtn{background:none;border:0;padding:4px 6px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;font-family:inherit}
+.linkbtn:hover{color:var(--accent,#C96442)}
+.linkbtn:focus-visible{outline:2px solid var(--accent,#C96442);outline-offset:2px;border-radius:4px}

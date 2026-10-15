@@ -98,8 +98,10 @@
           <label class="small">目标字数 <input id="w-words" type="number" min="0" step="500" placeholder="不限" style="width:90px"></label>
           <label class="small">配图数 <input id="w-images" type="number" min="0" max="10" placeholder="自动" style="width:70px"></label>
         </div>
+        <details class="adv" id="adv-box">
+        <summary class="muted small">高级选项</summary>
         <div class="persp-box" id="persp-box">
-          <label class="switch"><input type="checkbox" id="w-persp-on"><span>调用《十分吸引》思维框架</span></label>
+          <label class="switch"><input type="checkbox" id="w-persp-on"><span>调用复杂系统专家视角</span></label>
           <span class="muted small" id="persp-state"></span>
           <div class="row persp-opts hidden" id="persp-opts">
             <div class="seg sm" id="persp-level">
@@ -109,6 +111,7 @@
             <label class="small" id="persp-paras-w">最多 <input id="w-persp-paras" type="number" min="1" max="6" value="2" style="width:56px"> 处</label>
           </div>
         </div>
+        </details>
         <textarea class="ta" id="extra-notes" rows="2" placeholder="例：多用生活比喻；结尾给 3 条行动清单；面向 30 岁上班族"></textarea>
       </label>
       <div class="row">
@@ -214,7 +217,7 @@
   </header>
   <div class="row ed-tools">
     <input class="input" id="ed-term" placeholder="要解释的概念，如：美债收益率倒挂（也可先在正文里选中）" style="flex:1">
-    <button class="btn" id="ed-explain" type="button">用十分吸引解释并插入</button>
+    <button class="linkbtn muted small" id="ed-explain" type="button" title="选中或输入一个概念，用复杂系统视角生成 1-2 段解释，插在光标所在段落之后">概念解释</button>
   </div>
   <textarea class="ta mono" id="ed-text" rows="24"></textarea>
   <footer><button class="btn ghost" id="ed-cancel">取消</button><button class="btn primary" id="ed-save">保存并重新排版</button></footer>

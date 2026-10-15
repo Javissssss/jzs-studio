@@ -316,7 +316,7 @@ def api_persp_explain():
     if not term or len(term) > 60:
         return jsonify({"ok": False, "error": "请选中或输入要解释的概念（60 字内）"}), 400
     try:
-        prompt = perspective.concept_prompt(b.get("perspective") or "shifenxiyin", term, b.get("context") or "")
+        prompt = perspective.concept_prompt(b.get("perspective") or perspective.DEFAULT, term, b.get("context") or "")
         text = llm.chat(prompt, system="你是一位擅长把复杂概念讲给普通人的财经作者。")
     except RuntimeError as e:
         return jsonify({"ok": False, "error": str(e)}), 502

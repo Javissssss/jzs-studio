@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Writing perspectives ("视角"): optional thinking-framework packs, e.g.
-《十分吸引》 shifenxiyin-perspective.
+"""Writing perspectives ("视角"): optional thinking-framework packs, e.g. the
+bundled 复杂系统专家 (complexity) pack.
 
 Off by default. The user decides per article whether to use it and how much:
 
@@ -27,15 +27,16 @@ import sys
 from . import config
 
 PERSPECTIVES = {
-    "shifenxiyin": {
-        "name": "十分吸引",
-        "slug": "shifenxiyin-perspective",
-        "dir": "shifenxiyin",
+    "complexity": {
+        "name": "复杂系统专家",
+        "slug": "complexity-expert",
+        "dir": "complexity",
         "concept_sections": ["核心心智模型", "表达风格"],
         "full_sections": ["输出规范", "核心心智模型", "决策启发式", "表达风格"],
         "macro_script": "macro_latest.py",
     },
 }
+DEFAULT = "complexity"
 LEVELS = ("off", "concept", "full")
 BUNDLED_ROOT = os.path.join(config.PRODUCT_ROOT, "perspectives")
 
@@ -169,18 +170,18 @@ def brief_block(key, topic_text="", level="concept", max_paras=2, macro=True):
         return ""
     if level == "full":
         head = (
-            f"\n## 八、写作视角：《{p['name']}》思维框架（全文使用）\n\n"
-            "用下面这套框架的心智模型与表达风格来写，观点代表节目框架而非任何具体嘉宾；"
+            f"\n## 八、写作视角：{p['name']}思维框架（全文使用）\n\n"
+            "用下面这套框架的心智模型与表达风格来写，"
             "先拆机制、再落路标、最后给普通人一句能记住能做的话；不给买卖/仓位/点位指令。\n\n"
         )
         limit = 9000
     else:
         n = max(1, min(int(max_paras or 2), 6))
         head = (
-            f"\n## 八、写作视角：《{p['name']}》——只用于解释概念（最多 {n} 处）\n\n"
+            f"\n## 八、写作视角：{p['name']}——只用于解释概念（最多 {n} 处）\n\n"
             f"正文整体保持本账号原有文风。**只有**在需要解释一个概念/机制（例如\"为什么加息会让美元走强\"）时，"
             f"才借用下面的心智模型来讲透它，全文最多 {n} 处，每处 1-2 段；"
-            "其余段落不要套框架、不要堆术语、不要提节目名。不给买卖/仓位/点位指令。\n\n"
+            "其余段落不要套框架、不要堆术语、不要提框架名。不给买卖/仓位/点位指令。\n\n"
         )
         limit = 4500
     block = head + body[:limit]
@@ -199,9 +200,9 @@ def concept_prompt(key, term, context=""):
     if not d:
         raise RuntimeError("没找到该视角包（perspectives/ 目录缺失）")
     return (
-        f"用《{p['name']}》的思维框架，向普通读者解释这个概念：「{term}」。\n"
+        f"用{p['name']}的思维框架，向普通读者解释这个概念：「{term}」。\n"
         "要求：1-2 段，共 150-300 字；先一句话讲本质，再用一个生活化比喻讲清机制，"
-        "最后一句点出读者该盯的路标；不用小标题、不用列表、不提节目名、不给投资建议；"
+        "最后一句点出读者该盯的路标；不用小标题、不用列表、不提框架名、不给投资建议；"
         "只输出这几段正文。\n\n"
         + (f"上下文（这段解释要接在这里）：\n{context[:800]}\n\n" if context else "")
         + "框架参考：\n" + body[:4000]

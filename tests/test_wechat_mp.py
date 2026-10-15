@@ -75,24 +75,24 @@ class WechatBodyTest(unittest.TestCase):
 class PerspectiveTest(unittest.TestCase):
     def test_bundled_pack_found_without_local_install(self):
         with mock.patch.object(perspective, "_external_roots", return_value=iter(())):
-            d = perspective.find_skill("shifenxiyin")
+            d = perspective.find_skill("complexity")
         self.assertTrue(d and os.path.abspath(d).startswith(os.path.abspath(perspective.BUNDLED_ROOT)))
 
     def test_off_is_empty(self):
-        self.assertEqual(perspective.brief_block("shifenxiyin", "美联储", level="off"), "")
+        self.assertEqual(perspective.brief_block("complexity", "美联储", level="off"), "")
         self.assertEqual(perspective.brief_block("", "美联储"), "")
 
     def test_concept_level_is_scoped(self):
         with mock.patch.object(perspective, "macro_snapshot", return_value=""):
-            b = perspective.brief_block("shifenxiyin", "美联储", level="concept", max_paras=3)
-            f = perspective.brief_block("shifenxiyin", "美联储", level="full")
+            b = perspective.brief_block("complexity", "美联储", level="concept", max_paras=3)
+            f = perspective.brief_block("complexity", "美联储", level="full")
         self.assertIn("只用于解释概念", b)
         self.assertIn("最多 3 处", b)
         self.assertIn("全文使用", f)
         self.assertLess(len(b), len(f))
 
     def test_concept_prompt(self):
-        p = perspective.concept_prompt("shifenxiyin", "美债收益率")
+        p = perspective.concept_prompt("complexity", "美债收益率")
         self.assertIn("美债收益率", p)
 
 
