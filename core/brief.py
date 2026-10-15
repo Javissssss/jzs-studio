@@ -158,24 +158,8 @@ def generate_brief(topic, extra_notes=""):
         img_table += f"| {p['pos']} | {p['type']} | {p['engine']} | {p['desc']} |\n"
 
     finance_note = ""
-    ft = (title + summary).lower()
-    if any(
-        k in ft
-        for k in [
-            "美联储",
-            "利率",
-            "股",
-            "基金",
-            "楼市",
-            "汇率",
-            "黄金",
-            "国债",
-            "财经",
-            "经济",
-            "投资",
-        ]
-    ):
-        finance_note = "\n> ⚠️ 本文涉及财经，正文末尾必须加免责声明：「行情为已发生的客观描述，不构成任何买卖推荐。」\n"
+    if config.is_finance(title + " " + summary):
+        finance_note = f"\n> ⚠️ 本文涉及财经，正文末尾必须加免责声明：「{config.FINANCE_DISCLAIMER}」\n"
 
     brief = f"""# 「巨人之上」双平台创作简报
 
@@ -209,7 +193,7 @@ def generate_brief(topic, extra_notes=""):
 ### 结构模板
 {wechat_struct}
 
-    ### 配图规划（⚠️ 占位符是强制要求，不写会导致配图全部跳过）
+### 配图规划（⚠️ 占位符是强制要求，不写会导致配图全部跳过）
 {img_table}
 **占位符写法**（每张图单独占一行，格式严格，不能省略）：
 - 框架图（必须写）：`[FIGURE:f1] 图说文字`（f1/f2… 编号与下方 FIGURES 块 id 对应；kind 取 flow/compare/checklist/timeline）
@@ -324,7 +308,8 @@ def parse_ai_output(text):
             tags = [t.strip() for t in tags_block.splitlines() if t.strip()]
 
     # Fallback: no markers at all -> treat whole text as wechat draft
-    if not wechat and not xhs:
+    parsed_ok = bool(wechat or xhs)
+    if not parsed_ok:
         wechat = text.strip()
 
     return {
@@ -334,5 +319,5 @@ def parse_ai_output(text):
         "xhs_tags": tags,
         "figures": figures,
         "charts": charts,
-        "parsed_ok": bool(wechat or xhs),
+        "parsed_ok": parsed_ok,
     }

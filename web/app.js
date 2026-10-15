@@ -1,451 +1,447 @@
 "use strict";
 /* ============================================================
-   巨人之上 · 内容工作台 — app.js v2
-   1-screen, left-ops / right-preview, no page navigation
+   巨人之上 · 内容工作台 — app.js v3
+   Left: 4 operation blocks. Right: live preview.
+   All UI state is derived from the project returned by the API
+   (single source of truth: applyProject()).
    ============================================================ */
 
-// ── state ──────────────────────────────────────────────────
-let PID = null;
-let PROJECTS = [];
-let TOPIC_MODE = "weibo";
-let SEL_CAND = null;
-let BRIEF_TEXT = "";
-let DRAFT = {};
+const $ = (id) => document.getElementById(id);
+const S = { pid: null, projects: [], mode: "weibo", cands: [], sel: null, brief: "", project: null, edField: "wechat_md" };
 
 // ── api ────────────────────────────────────────────────────
-async function api(path, method = "GET", body = null, timeoutMs = 180000) {
-  const opt = { method, headers: { "Content-Type": "application/json" } };
-  if (body !== null) opt.body = JSON.stringify(body);
+async function api(path, method = "GET", body = null, timeoutMs = 240000) {
   const ctrl = new AbortController();
-  opt.signal = ctrl.signal;
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(path, opt);
-    clearTimeout(timer);
-    const j = await r.json().catch(() => ({ ok: false, error: "parse error" }));
-    return j;
+    const r = await fetch(path, {
+      method, signal: ctrl.signal,
+      headers: { "Content-Type": "application/json" },
+      body: body === null ? undefined : JSON.stringify(body),
+    });
+    return await r.json().catch(() => ({ ok: false, error: `服务返回异常 (HTTP ${r.status})` }));
   } catch (e) {
-    clearTimeout(timer);
-    if (e.name === "AbortError") return { ok: false, error: "请求超时，请重试" };
-    return { ok: false, error: "网络：" + e.message };
-  }
+    return { ok: false, error: e.name === "AbortError" ? "请求超时，请重试" : "连不上服务：" + e.message };
+  } finally { clearTimeout(timer); }
 }
 
 // ── utils ──────────────────────────────────────────────────
-function esc(s) {
-  return String(s == null ? "" : s)
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const show = (id, on = true) => $(id)?.classList.toggle("hidden", !on);
 let _tt;
 function toast(msg, kind = "") {
-  const t = document.getElementById("toast");
+  const t = $("toast");
   t.textContent = msg; t.className = "toast show " + kind;
-  clearTimeout(_tt); _tt = setTimeout(() => { t.className = "toast " + kind; }, 2500);
+  clearTimeout(_tt); _tt = setTimeout(() => (t.className = "toast " + kind), 2800);
 }
-function spin(btn, on) {
-  if (on) {
-    btn._old = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spin"></span> ' + btn._old.replace(/<[^>]+>/g, "").trim();
-  } else {
-    btn.disabled = false;
-    if (btn._old != null) btn.innerHTML = btn._old;
-  }
+async function busy(btn, fn) {
+  if (btn.disabled) return;
+  const old = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span> ${btn.textContent.trim()}`;
+  try { return await fn(); } finally { btn.disabled = false; btn.innerHTML = old; }
 }
-function show(id) { document.getElementById(id)?.classList.remove("hidden"); }
-function hide(id) { document.getElementById(id)?.classList.add("hidden"); }
-function $(id) { return document.getElementById(id); }
+async function copyText(txt) {
+  try { await navigator.clipboard.writeText(txt); return true; } catch { /* fall through */ }
+  const ta = Object.assign(document.createElement("textarea"), { value: txt });
+  ta.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove(); return ok;
+}
+function requirePid() {
+  if (S.pid) return true;
+  toast("先点左上角 ＋ 新建项目", "err"); return false;
+}
 
 // ── accordion ──────────────────────────────────────────────
-document.querySelectorAll(".blk-head").forEach(h => {
-  h.addEventListener("click", () => h.closest(".block").classList.toggle("collapsed"));
-});
-function openBlock(id) { document.getElementById(id)?.classList.remove("collapsed"); }
-function closeBlock(id) { document.getElementById(id)?.classList.add("collapsed"); }
-function markDone(statusId, text) {
-  const el = $(statusId);
-  if (el) { el.textContent = text; el.style.color = "var(--ok)"; }
+document.querySelectorAll(".blk-head").forEach((h) =>
+  h.addEventListener("click", () => h.closest(".block").classList.toggle("collapsed")));
+function focusBlock(id) {
+  document.querySelectorAll(".block").forEach((b) => b.classList.toggle("collapsed", b.id !== id));
 }
 
 // ── health ─────────────────────────────────────────────────
 async function loadHealth() {
   const h = await api("/api/health");
-  const items = [["Pexels", h.pexels_key], ["Playwright", h.playwright], ["agent-browser", h.agent_browser]];
-  $("health-bar").innerHTML = items.map(([n, on]) =>
-    `<span class="h-item"><span class="h-dot ${on ? "on" : ""}"></span>${n}</span>`).join("");
+  const items = [
+    ["Pexels", h.pexels_key, "氛围配图素材源（设置 PEXELS_API_KEY）"],
+    ["Playwright", h.playwright, "框架图 / 数据图 / 小红书卡片截图"],
+    ["agent-browser", h.agent_browser, "富文本复制 + 扫码登录平台（可选）"],
+  ];
+  $("health-bar").innerHTML = items.map(([n, on, tip]) =>
+    `<span class="h-item" title="${esc(tip)}${on ? "" : " · 未就绪"}"><span class="h-dot ${on ? "on" : ""}"></span>${n}</span>`).join("");
 }
 
 // ── projects ───────────────────────────────────────────────
 async function loadProjects() {
   const r = await api("/api/projects");
-  PROJECTS = r.projects || [];
-  const sel = $("proj-sel");
-  sel.innerHTML = PROJECTS.length
-    ? PROJECTS.map(p => `<option value="${esc(p.id)}">${esc(p.title || "未命名")} · ${esc(p.stage_label)}</option>`).join("")
-    : `<option value="">（无项目）</option>`;
-  if (PID) sel.value = PID;
+  S.projects = r.projects || [];
+  $("proj-sel").innerHTML = S.projects.length
+    ? S.projects.map((p) => `<option value="${esc(p.id)}">${esc(p.title || "未命名")} · ${esc(p.stage_label)}</option>`).join("")
+    : `<option value="">（还没有项目）</option>`;
+  if (S.pid) $("proj-sel").value = S.pid;
 }
-
-$("proj-sel").addEventListener("change", async function () {
-  const pid = this.value; if (!pid) return;
+async function openProject(pid) {
   const r = await api("/api/projects/" + pid);
-  if (r.ok) loadProjectState(r.project);
-});
-
-$("btn-new").addEventListener("click", async () => {
+  if (r.ok) { S.cands = []; S.sel = null; S.brief = ""; applyProject(r.project, true); }
+}
+async function newProject() {
   const r = await api("/api/projects", "POST", { title: "未命名" });
-  if (!r.ok) { toast(r.error || "新建失败", "err"); return; }
-  PID = r.project.id;
+  if (!r.ok) return toast(r.error || "新建失败", "err");
+  S.pid = r.project.id; S.cands = []; S.sel = null; S.brief = "";
   await loadProjects();
-  $("proj-sel").value = PID;
-  resetUI();
-  toast("新项目已建，开始选题", "ok");
-});
-
+  applyProject(r.project, true);
+  toast("新项目已建，先选个题", "ok");
+}
+$("proj-sel").addEventListener("change", (e) => e.target.value && openProject(e.target.value));
+$("btn-new").addEventListener("click", newProject);
+$("btn-start").addEventListener("click", newProject);
 $("btn-del").addEventListener("click", async () => {
-  if (!PID) return;
-  if (!confirm("删除该项目及所有产出？")) return;
-  await api("/api/projects/" + PID, "DELETE");
-  PID = null; BRIEF_TEXT = ""; DRAFT = {}; SEL_CAND = null;
-  await loadProjects(); resetUI(); toast("已删除");
+  if (!S.pid || !confirm("删除该项目及全部产出？此操作不可恢复。")) return;
+  await api("/api/projects/" + S.pid, "DELETE");
+  S.pid = null; S.project = null;
+  await loadProjects();
+  if (S.projects.length) await openProject(S.projects[0].id); else applyProject(null);
+  toast("已删除");
 });
 
-function loadProjectState(proj) {
-  PID = proj.id;
-  SEL_CAND = proj.topic?.title ? proj.topic : null;
-  DRAFT = proj.draft || {};
-  BRIEF_TEXT = "";
-  resetUI();
-  if (proj.topic?.title) {
-    showTopicPreview(proj.topic);
-    markDone("st-topic", proj.topic.title.slice(0, 14) + "…");
-    openBlock("blk-brief"); closeBlock("blk-topic");
-  }
-  if (DRAFT.wechat_md) {
-    showDraftPreview(DRAFT);
-    markDone("st-brief", `公${DRAFT.wechat_md.length}字`);
-    openBlock("blk-media");
-  }
-  if (proj.media?.manifest?.length) {
-    showMediaPreview(proj.media);
-    markDone("st-media", `${proj.media.manifest.filter(x => x.ok).length}/${proj.media.manifest.length}张`);
-    openBlock("blk-pub");
-  }
-  if (proj.render?.html_url) {
-    showRenderPreview(proj.render.html_url, proj.render.meta || {});
-  }
-}
+// ── single render function: project -> whole UI ────────────
+const STAGE_ORDER = ["topic", "brief", "draft", "media", "render", "review", "publish", "done"];
+const STEP_OF = { topic: "topic", brief: "brief", draft: "brief", media: "media", render: "media", review: "review", publish: "publish", done: "publish" };
 
-function resetUI() {
-  hide("pv-stack"); show("pv-empty");
-  hide("pv-topic"); hide("pv-draft"); hide("pv-media"); hide("pv-render");
-  $("cand-list").innerHTML = "";
-  $("btn-pick").disabled = true;
-  $("brief-preview").textContent = "";
-  $("btn-copy-brief").disabled = true;
-  $("ai-paste").value = "";
-  $("fill-status").textContent = ""; $("fill-status").className = "fill-status";
-  $("media-log").textContent = "";
-  ["st-topic","st-brief","st-media","st-pub"].forEach(id => {
-    const e = $(id); if (e) { e.textContent = ""; e.style.color = ""; }
+function applyProject(p, autoFocus = false) {
+  S.project = p;
+  S.pid = p?.id || null;
+  const has = {
+    topic: !!p?.topic?.title,
+    draft: !!p?.draft?.wechat_md,
+    media: !!p?.media?.manifest,
+    render: !!p?.render?.html_url,
+    done: p?.stage === "done",
+  };
+
+  // empty state
+  show("pv-empty", !p);
+  show("pv-stack", !!p);
+
+  // stepper
+  const cur = STEP_OF[p?.stage] || "topic";
+  const steps = ["topic", "brief", "media", "review", "publish"];
+  const curIdx = p ? steps.indexOf(cur) : -1;
+  document.querySelectorAll("#stepper li").forEach((li, i) => {
+    li.className = !p ? "" : i < curIdx || (has.done && i === curIdx) ? "done" : i === curIdx ? "cur" : "";
   });
+
+  // block done marks + status text
+  const mark = (blk, st, on, text) => {
+    $(blk).classList.toggle("done", on);
+    $(st).textContent = on ? text : "";
+  };
+  mark("blk-topic", "st-topic", has.topic, p?.topic?.title || "");
+  mark("blk-brief", "st-brief", has.draft, has.draft ? `公众号 ${p.draft.wechat_md.length} 字` : "");
+  const man = p?.media?.manifest || [];
+  const okN = man.filter((x) => x.ok).length;
+  mark("blk-media", "st-media", has.render, has.render ? `配图 ${okN}/${man.length} · 已排版` : "");
+  mark("blk-pub", "st-pub", has.done, "已归档");
+
+  // previews
+  renderTopicCard(p?.topic);
+  renderDraftCard(p?.draft, p?.render?.meta);
+  renderOutput(p);
+  renderReview(p);
+  $("btn-export").href = p ? `/api/projects/${p.id}/export.zip` : "#";
+  ["btn-rerender", "btn-edit"].forEach((id) => ($(id).disabled = !has.draft));
+  if (!S.cands.length) $("cand-list").innerHTML = "";
+  $("btn-pick").disabled = !S.sel;
+
+  if (autoFocus && p) {
+    focusBlock(!has.topic ? "blk-topic" : !has.draft ? "blk-brief" : !has.render ? "blk-media" : "blk-pub");
+  }
 }
 
-// ── mode inputs ────────────────────────────────────────────
+// ── 1. topic ───────────────────────────────────────────────
+const MODE_HINT = { weibo: "抓取微博实时热搜 Top 50", toutiao: "抓取今日头条热榜 Top 50", baidu: "抓取百度实时热搜 Top 50" };
 function renderModeInputs() {
   const c = $("mode-inputs");
-  if (TOPIC_MODE === "weibo") {
-    c.innerHTML = `<p class="hint mt6">直接抓取微博实时热搜 Top 50，无需输入。</p>`;
-  } else if (TOPIC_MODE === "toutiao") {
-    c.innerHTML = `<p class="hint mt6">直接抓取今日头条热榜 Top 50，无需输入。</p>`;
-  } else if (TOPIC_MODE === "manual") {
-    c.innerHTML = `<textarea class="ta mt6" id="manual-input" rows="5" placeholder="每行一个题目，可用「标题 | 摘要」格式"></textarea>`;
-  } else {
-    c.innerHTML = `<input class="input mt6" id="direct-title" placeholder="文章标题（必填）">
-      <textarea class="ta mt6" id="direct-sum" rows="3" placeholder="摘要 / 背景素材（可选）"></textarea>`;
-  }
+  if (MODE_HINT[S.mode]) c.innerHTML = `<p class="hint">${MODE_HINT[S.mode]}，按账号定位（AI · 财经 · 效率）评分排序。</p>`;
+  else if (S.mode === "manual") c.innerHTML = `<textarea class="ta" id="manual-input" rows="5" placeholder="每行一个题目，可写成「标题 | 摘要」"></textarea>`;
+  else c.innerHTML = `<input class="input" id="direct-title" placeholder="文章标题（必填）">
+      <textarea class="ta" id="direct-sum" rows="3" placeholder="摘要 / 背景素材（可选）"></textarea>`;
+  $("btn-fetch").textContent = S.mode === "direct" ? "使用这个题目" : S.mode === "manual" ? "评分排序" : "抓取并评分";
 }
-$("mode-seg").querySelectorAll(".seg").forEach(b => {
-  b.addEventListener("click", () => {
-    $("mode-seg").querySelectorAll(".seg").forEach(x => x.classList.remove("active"));
-    b.classList.add("active");
-    TOPIC_MODE = b.dataset.m;
-    renderModeInputs();
-  });
+$("mode-seg").addEventListener("click", (e) => {
+  const b = e.target.closest(".seg"); if (!b) return;
+  $("mode-seg").querySelectorAll(".seg").forEach((x) => x.classList.toggle("active", x === b));
+  S.mode = b.dataset.m; renderModeInputs();
 });
 renderModeInputs();
 
-// ── fetch topics ───────────────────────────────────────────
-$("btn-fetch").addEventListener("click", async function () {
-  if (!PID) { toast("请先新建或选择项目", "err"); return; }
-  const body = { mode: TOPIC_MODE };
-  if (TOPIC_MODE === "weibo" || TOPIC_MODE === "toutiao") {
-    body.limit = 50;
-  } else if (TOPIC_MODE === "manual") {
-    body.text = $("manual-input")?.value || "";
-  } else {
-    body.title = ($("direct-title")?.value || "").trim();
-    body.summary = ($("direct-sum")?.value || "").trim();
-    if (!body.title) { toast("请填写标题", "err"); return; }
+$("btn-fetch").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  if (!requirePid()) return;
+  const body = { mode: S.mode, limit: 50 };
+  if (S.mode === "manual") body.text = $("manual-input").value;
+  if (S.mode === "direct") {
+    body.title = $("direct-title").value.trim();
+    body.summary = $("direct-sum").value.trim();
+    if (!body.title) return toast("请填写标题", "err");
   }
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/topics/fetch`, "POST", body);
-  spin(this, false);
-  if (!r.ok) { toast(r.error || "抓取失败", "err"); return; }
-  const cands = r.candidates || [];
-  toast(`抓到 ${cands.length} 个候选`, "ok");
-  renderCandidates(cands);
-});
+  const r = await api(`/api/projects/${S.pid}/topics/fetch`, "POST", body);
+  if (!r.ok) return toast(r.error || "抓取失败（可换个来源或手动输入）", "err");
+  S.cands = r.candidates || [];
+  // direct mode: one candidate, select it straight away
+  if (S.mode === "direct" && S.cands.length) return pickTopic(S.cands[0]);
+  renderCandidates();
+  toast(`拿到 ${S.cands.length} 个候选`, "ok");
+}));
+$("niche-only").addEventListener("change", renderCandidates);
 
-function renderCandidates(cands) {
-  SEL_CAND = null; $("btn-pick").disabled = true;
+function renderCandidates() {
+  const nicheOnly = $("niche-only").checked;
+  const list = S.cands.filter((c) => !nicheOnly || c.niche_hits > 0);
+  show("niche-wrap", S.cands.length > 0);
+  S.sel = null; $("btn-pick").disabled = true;
   const box = $("cand-list");
-  if (!cands.length) { box.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px 0">没有候选题</div>'; return; }
-  box.innerHTML = cands.map((c, i) => `
-    <div class="cand" data-i="${i}">
+  if (!list.length) { box.innerHTML = `<div class="empty-note">${S.cands.length ? "没有垂直相关的题，取消勾选看全部" : "没有候选题"}</div>`; return; }
+  box.innerHTML = list.map((c, i) => `
+    <div class="cand" data-i="${i}" tabindex="0">
       <div class="cand-rank">${c.rank || i + 1}</div>
       <div class="cand-body">
         <div class="cand-t">${esc(c.title)}</div>
         ${c.summary ? `<div class="cand-s">${esc(c.summary)}</div>` : ""}
       </div>
       <div class="cand-badges">
-        <span class="badge badge-score">${c.total_score || 0}分</span>
-        ${c.niche_hits ? `<span class="badge badge-niche">垂直×${c.niche_hits}</span>` : ""}
+        <span class="badge badge-score">${c.total_score || 0} 分</span>
+        ${c.niche_hits ? `<span class="badge badge-niche">垂直 ×${c.niche_hits}</span>` : ""}
         ${c.recommend ? `<span class="badge badge-rec">荐</span>` : ""}
       </div>
     </div>`).join("");
-  const _c = cands;
-  box.querySelectorAll(".cand").forEach(node => {
-    node.addEventListener("click", () => {
-      box.querySelectorAll(".cand").forEach(x => x.classList.remove("sel"));
-      node.classList.add("sel");
-      SEL_CAND = _c[+node.dataset.i];
-      $("btn-pick").disabled = false;
-    });
+  box.querySelectorAll(".cand").forEach((node) => {
+    const select = () => {
+      box.querySelectorAll(".cand").forEach((x) => x.classList.toggle("sel", x === node));
+      S.sel = list[+node.dataset.i]; $("btn-pick").disabled = false;
+    };
+    node.addEventListener("click", select);
+    node.addEventListener("dblclick", () => { select(); pickTopic(S.sel); });
+    node.addEventListener("keydown", (e) => e.key === "Enter" && (select(), pickTopic(S.sel)));
   });
 }
+$("btn-pick").addEventListener("click", (e) => busy(e.currentTarget, () => pickTopic(S.sel)));
 
-$("btn-pick").addEventListener("click", async function () {
-  if (!SEL_CAND || !PID) return;
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/topic/select`, "POST", { topic: SEL_CAND });
-  spin(this, false);
-  if (!r.ok) { toast(r.error || "选定失败", "err"); return; }
-  markDone("st-topic", SEL_CAND.title.slice(0, 14) + "…");
-  showTopicPreview(SEL_CAND);
-  openBlock("blk-brief"); closeBlock("blk-topic");
+async function pickTopic(topic) {
+  if (!topic || !S.pid) return;
+  const r = await api(`/api/projects/${S.pid}/topic/select`, "POST", { topic });
+  if (!r.ok) return toast(r.error || "选定失败", "err");
+  S.cands = []; S.sel = null;
   await loadProjects();
-  toast("已选定，生成简报 →", "ok");
-});
+  applyProject(r.project, true);
+  toast("题目已定，下一步生成简报", "ok");
+}
 
-// ── preview: topic ─────────────────────────────────────────
-function showTopicPreview(topic) {
-  $("pv-topic-title").textContent = topic.title || "";
+function renderTopicCard(t) {
+  show("pv-topic", !!t?.title);
+  if (!t?.title) return;
+  $("pv-topic-title").textContent = t.title;
   $("pv-topic-meta").innerHTML = [
-    topic.summary ? esc(topic.summary.slice(0, 80)) : "",
-    topic.source ? `<span style="opacity:.6;margin-left:8px">${esc(topic.source)}</span>` : "",
-    topic.total_score != null ? `<span style="margin-left:8px">总分 ${topic.total_score}</span>` : "",
-  ].join("");
-  show("pv-topic"); hide("pv-empty"); show("pv-stack");
+    t.summary && esc(t.summary.slice(0, 120)),
+    [t.source, t.total_score != null && `评分 ${t.total_score}`].filter(Boolean).map(esc).join(" · "),
+  ].filter(Boolean).join("<br>");
 }
 
-// ── brief ──────────────────────────────────────────────────
-$("btn-gen-brief").addEventListener("click", async function () {
-  if (!PID) { toast("请先选定题目", "err"); return; }
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/brief/generate`, "POST", {});
-  spin(this, false);
-  if (!r.ok) { toast(r.error || "生成失败", "err"); return; }
-  BRIEF_TEXT = r.brief;
-  $("brief-preview").textContent = BRIEF_TEXT.slice(0, 600) + (BRIEF_TEXT.length > 600 ? "\n…（滚动查看）" : "");
-  $("btn-copy-brief").disabled = false;
-  toast("简报已生成，复制后给 AI 出稿", "ok");
-});
+// ── 2. brief + fill ────────────────────────────────────────
+$("btn-gen-brief").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  if (!requirePid()) return;
+  if (!S.project?.topic?.title) return toast("请先选定题目", "err");
+  const r = await api(`/api/projects/${S.pid}/brief/generate`, "POST", { extra_notes: $("extra-notes").value.trim() });
+  if (!r.ok) return toast(r.error || "生成失败", "err");
+  S.brief = r.brief;
+  $("brief-preview").textContent = S.brief;
+  show("brief-details");
+  const ok = await copyText(S.brief);
+  $("brief-hint").innerHTML = ok
+    ? `✓ 简报已复制（${S.brief.length} 字）。粘给任意 AI，把完整回复贴到下面。`
+    : "简报已生成，但自动复制失败，请展开全文手动复制。";
+  toast(ok ? "简报已复制到剪贴板" : "请手动复制简报", ok ? "ok" : "err");
+  $("ai-paste").focus();
+}));
 
-$("btn-copy-brief").addEventListener("click", () => {
-  if (!BRIEF_TEXT) return;
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(BRIEF_TEXT).then(() => toast("简报已复制", "ok")).catch(() => fbCopy(BRIEF_TEXT));
-  } else fbCopy(BRIEF_TEXT);
+$("ai-paste").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("btn-fill").click();
 });
-function fbCopy(txt) {
-  const ta = document.createElement("textarea"); ta.value = txt;
-  ta.style.cssText = "position:fixed;opacity:0";
-  document.body.appendChild(ta); ta.select();
-  try { document.execCommand("copy"); toast("已复制", "ok"); } catch { toast("复制失败", "err"); }
-  document.body.removeChild(ta);
-}
-
-// ── fill draft ─────────────────────────────────────────────
-$("btn-fill").addEventListener("click", async function () {
+$("btn-fill").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  if (!requirePid()) return;
   const txt = $("ai-paste").value.trim();
-  if (!txt) { toast("请先粘贴 AI 回复", "err"); return; }
-  if (!PID) { toast("请先选定题目", "err"); return; }
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/draft/fill`, "POST", { ai_output: txt });
-  spin(this, false);
-  if (!r.ok) { toast(r.error || "解析失败", "err"); return; }
-  DRAFT = r.project.draft || {};
+  if (!txt) return toast("请先粘贴 AI 回复", "err");
+  const r = await api(`/api/projects/${S.pid}/draft/fill`, "POST", { ai_output: txt });
+  if (!r.ok) return toast(r.error || "解析失败", "err");
+  const d = r.project.draft || {};
+  const en = r.enriched || {};
+  const added = Object.entries({ 氛围图: en.mood, 框架图: en.figure, 数据图: en.chart })
+    .filter(([, n]) => n).map(([k, n]) => `${k}×${n}`).join("、");
   const st = $("fill-status");
-  if (r.parsed_ok) {
-    st.textContent = `✓ 公众号 ${DRAFT.wechat_md?.length || 0} 字，小红书 ${DRAFT.xhs_md?.length || 0} 字，框架图 ${DRAFT.figures?.length || 0}，数据图 ${DRAFT.charts?.length || 0}`;
-    st.className = "fill-status ok";
-  } else {
-    st.textContent = "⚠ 未识别标记，整段作为公众号正文";
-    st.className = "fill-status";
-  }
-  markDone("st-brief", `公${DRAFT.wechat_md?.length || 0}字`);
-  showDraftPreview(DRAFT);
-  openBlock("blk-media"); closeBlock("blk-brief");
+  st.className = "fill-status " + (r.parsed_ok ? "ok" : "warn");
+  st.textContent = r.parsed_ok
+    ? `✓ 公众号 ${d.wechat_md?.length || 0} 字 · 小红书 ${d.xhs_md?.length || 0} 字` + (added ? ` · 自动补位 ${added}` : "")
+    : "⚠ 没识别到标记块，已把整段当作公众号正文（小红书卡片会跳过）";
   await loadProjects();
-  toast(r.parsed_ok ? "回填完成 →" : "回填完成（无标记）");
-});
+  applyProject(r.project, true);
+  toast("回填完成，下一步一键生产", "ok");
+}));
 
-function showDraftPreview(d) {
+function renderDraftCard(d, meta) {
+  show("pv-draft", !!d?.wechat_md);
+  if (!d?.wechat_md) return;
   $("pv-draft-stats").innerHTML = [
-    { v: d.wechat_md?.length || 0, k: "公号字" },
-    { v: d.xhs_md?.length || 0, k: "小红书字" },
-    { v: d.figures?.length || 0, k: "框架图" },
-    { v: d.charts?.length || 0, k: "数据图" },
-  ].map(x => `<div class="pv-stat"><span class="sv">${x.v}</span><span class="sk">${x.k}</span></div>`).join("");
-  $("pv-xhs-titles").innerHTML = (d.xhs_titles || []).map(t => `<div class="pv-xhs-title">${esc(t)}</div>`).join("");
-  $("pv-tags").innerHTML = (d.xhs_tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join("");
-  show("pv-draft");
+    [meta?.word_count ?? d.wechat_md.length, meta ? "公众号字数" : "公众号稿长"], [d.xhs_md?.length || 0, "小红书字数"],
+    [d.figures?.length || 0, "框架图"], [d.charts?.length || 0, "数据图"],
+  ].map(([v, k]) => `<div class="pv-stat"><span class="sv">${v}</span><span class="sk">${k}</span></div>`).join("");
+  $("pv-xhs-titles").innerHTML = (d.xhs_titles || []).map((t) => `<div class="pv-xhs-title">${esc(t)}</div>`).join("");
+  $("pv-tags").innerHTML = (d.xhs_tags || []).map((t) => `<span class="chip">${esc(t)}</span>`).join("");
 }
 
-// ── media + render ─────────────────────────────────────────
-$("btn-media").addEventListener("click", async function () {
-  if (!PID) { toast("请先回填稿件", "err"); return; }
-  const log = $("media-log");
-  spin(this, true);
-  log.textContent = "⏳ 配图生成中（约 30-90s）…";
+// ── 3. produce ─────────────────────────────────────────────
+function logLines(lines) {
+  $("media-log").innerHTML = lines.map(([cls, t]) => `<li class="${cls}">${esc(t)}</li>`).join("");
+}
+$("btn-produce").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  if (!requirePid()) return;
+  if (!S.project?.draft?.wechat_md) return toast("请先回填稿件", "err");
+  logLines([["run", "配图生成中（框架图 / 氛围图 / 数据图 / 小红书卡片）…"]]);
+  const mr = await api(`/api/projects/${S.pid}/media/generate`, "POST", {});
+  if (!mr.ok) { logLines([["err", "✗ 配图失败：" + (mr.error || "")]]); return toast("配图失败", "err"); }
+  const lines = mediaLines(mr.project.media);
+  logLines([...lines, ["run", "排版中…"]]);
+  applyProject(mr.project);
+  await doRender(lines);
+}));
+$("btn-rerender").addEventListener("click", (e) => busy(e.currentTarget, () => doRender([])));
 
-  const mr = await api(`/api/projects/${PID}/media/generate`, "POST", {});
-  if (!mr.ok) {
-    spin(this, false);
-    log.textContent = "✗ 配图失败：" + (mr.error || "");
-    toast("配图失败", "err"); return;
-  }
-  const man = mr.project.media?.manifest || [];
-  const okN = man.filter(x => x.ok).length;
-  log.textContent = `✓ 配图 ${okN}/${man.length}\n` +
-    man.map(x => `  ${x.type}:${x.key} ${x.ok ? "✓" : "✗ " + (x.log || "").slice(0, 50)}`).join("\n");
-
-  log.textContent += "\n⏳ 排版中…";
-  const rr = await api(`/api/projects/${PID}/render`, "POST", {});
-  spin(this, false);
-  if (!rr.ok) {
-    log.textContent += "\n✗ 排版失败：" + (rr.error || "");
-    toast("排版失败", "err"); return;
-  }
+function mediaLines(m) {
+  const man = m?.manifest || [];
+  const okN = man.filter((x) => x.ok).length;
+  const lines = [[okN === man.length ? "ok" : "err", `配图 ${okN}/${man.length}`]];
+  man.filter((x) => !x.ok).forEach((x) => lines.push(["err", `  ✗ ${x.type}:${x.key} ${(x.log || "").slice(0, 60)}`]));
+  const cardN = (m?.cards || []).length;
+  lines.push([cardN ? "ok" : "", cardN ? `小红书卡片 ${cardN} 张` : "小红书卡片：跳过（无小红书稿）"]);
+  return lines;
+}
+async function doRender(prev) {
+  const rr = await api(`/api/projects/${S.pid}/render`, "POST", {});
+  if (!rr.ok) { logLines([...prev, ["err", "✗ 排版失败：" + (rr.error || "")]]); return toast("排版失败", "err"); }
   const meta = rr.project.render?.meta || {};
-  log.textContent += `\n✓ 排版完成：${meta.word_count || 0} 字，${meta.sections || 0} 节`;
-
-  markDone("st-media", `${okN}/${man.length}张`);
-  showMediaPreview(mr.project.media);
-  showRenderPreview(rr.project.render?.html_url, meta);
-  openBlock("blk-pub"); closeBlock("blk-media");
-  await api(`/api/projects/${PID}/approve`, "POST", {});
+  logLines([...prev, ["ok", `排版完成：${meta.word_count || 0} 字 · ${meta.sections || 0} 节 · ${meta.images || 0} 图`]]);
   await loadProjects();
-  toast(`配图排版完成 ${okN}/${man.length}`, "ok");
+  applyProject(rr.project, true);
+  toast("终版已生成，右侧预览", "ok");
+}
+
+function renderOutput(p) {
+  const htmlUrl = p?.render?.html_url;
+  const man = p?.media?.manifest || [];
+  const cards = p?.media?.card_urls || [];
+  show("pv-output", !!(htmlUrl || man.length));
+  if (!htmlUrl && !man.length) return;
+  const frame = $("pv-frame");
+  if (htmlUrl) {
+    const src = htmlUrl + "?t=" + encodeURIComponent(p.updated || "");
+    if (frame.dataset.src !== src) { frame.src = src; frame.dataset.src = src; }
+    $("pv-render-link").href = htmlUrl;
+  }
+  $("xhs-count").textContent = cards.length ? `(${cards.length})` : "";
+  $("media-count").textContent = man.length ? `(${man.filter((x) => x.ok).length}/${man.length})` : "";
+  $("pv-cards").innerHTML = cards.length
+    ? cards.map((u, i) => `<img src="${esc(u)}" alt="小红书卡片 ${i + 1}" data-cap="卡片 ${i + 1}/${cards.length}" loading="lazy">`).join("")
+    : `<div class="empty-note">还没有小红书卡片</div>`;
+  $("pv-thumbs").innerHTML = man.map((x) => x.ok && x.url
+    ? `<div class="pv-thumb" data-url="${esc(x.url)}" data-cap="${esc(x.caption || x.key)}"><img src="${esc(x.url)}" alt="${esc(x.caption)}" loading="lazy"><div class="pt-label">${esc(x.type)} · ${esc(x.caption || x.key)}</div></div>`
+    : `<div class="pv-thumb fail"><div class="pt-fail">生成失败<br>${esc((x.log || "").slice(0, 60))}</div><div class="pt-label">${esc(x.type)}:${esc(x.key)}</div></div>`).join("");
+}
+
+document.querySelector(".tabs").addEventListener("click", (e) => {
+  const t = e.target.closest(".tab"); if (!t) return;
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
+  document.querySelectorAll(".tab-pane").forEach((x) => x.classList.toggle("hidden", x.dataset.pane !== t.dataset.tab));
 });
 
-function showMediaPreview(media) {
-  const man = media.manifest || [];
-  const cards = media.card_urls || [];
-  const all = [
-    ...man.filter(x => x.url).map(x => ({ url: x.url, label: x.type + ":" + x.key, ok: x.ok })),
-    ...cards.map(u => ({ url: u, label: "XHS卡片", ok: true })),
+// ── editor ─────────────────────────────────────────────────
+$("btn-edit").addEventListener("click", () => {
+  S.edField = "wechat_md";
+  $("ed-seg").querySelectorAll(".seg").forEach((x) => x.classList.toggle("active", x.dataset.f === S.edField));
+  $("ed-text").value = S.project?.draft?.[S.edField] || "";
+  $("editor").showModal();
+});
+$("ed-seg").addEventListener("click", (e) => {
+  const b = e.target.closest(".seg"); if (!b) return;
+  S.project.draft[S.edField] = $("ed-text").value; // keep unsaved edits when switching
+  S.edField = b.dataset.f;
+  $("ed-seg").querySelectorAll(".seg").forEach((x) => x.classList.toggle("active", x === b));
+  $("ed-text").value = S.project.draft[S.edField] || "";
+});
+$("ed-save").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  S.project.draft[S.edField] = $("ed-text").value;
+  const { wechat_md, xhs_md } = S.project.draft;
+  const r = await api(`/api/projects/${S.pid}/draft`, "POST", { wechat_md, xhs_md });
+  if (!r.ok) return toast(r.error || "保存失败", "err");
+  $("editor").close();
+  applyProject(r.project);
+  await doRender([["ok", "稿件已保存"]]);
+}));
+
+// ── 4. review + publish ────────────────────────────────────
+function renderReview(p) {
+  const meta = p?.render?.meta;
+  const d = p?.draft || {};
+  if (!meta) { $("review-list").innerHTML = `<li>完成第 3 步后在这里自检</li>`; return; }
+  const items = [
+    [meta.word_count >= 1500, `正文 ${meta.word_count} 字` + (meta.word_count < 1500 ? "（偏短，建议 2500+）" : "")],
+    [meta.missing_images === 0, meta.missing_images ? `${meta.missing_images} 张配图失败，可编辑稿件删掉对应占位符` : `配图 ${meta.images} 张全部到位`],
+    [meta.has_close, meta.has_close ? "结尾互动块已加" : "缺少结尾互动块 [CLOSE]…[/CLOSE]"],
+    [true, meta.finance ? "财经题，页脚已自动加免责声明" : "非财经题，无需免责声明"],
+    [(d.xhs_titles || []).length > 0, (d.xhs_titles || []).length ? `小红书标题：${d.xhs_titles[0]}` : "缺少小红书标题"],
+    [(p.media?.cards || []).length > 0, `小红书卡片 ${(p.media?.cards || []).length} 张`],
   ];
-  $("pv-thumbs").innerHTML = all.length
-    ? all.map(x => `<div class="pv-thumb ${x.ok ? "" : "fail"}" data-url="${esc(x.url)}" data-cap="${esc(x.label)}">
-        <img src="${esc(x.url)}" alt="" loading="lazy">
-        <div class="pt-label">${esc(x.label)}</div>
-        <div class="pt-zoom">⤢</div></div>`).join("")
-    : '<div style="font-size:12px;color:var(--muted)">无缩略图</div>';
-  // attach click handlers after innerHTML set
-  $("pv-thumbs").querySelectorAll(".pv-thumb[data-url]").forEach(el => {
-    el.addEventListener("click", () => openLightbox(el.dataset.url, el.dataset.cap));
-  });
-  show("pv-media");
+  $("review-list").innerHTML = items.map(([ok, t]) => `<li class="${ok ? "ok" : "warn"}">${esc(t)}</li>`).join("");
 }
+
+const pubAction = (id, path, okMsg) => $(id).addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  if (!requirePid()) return;
+  const r = await api(`/api/projects/${S.pid}/${path}`, "POST", {});
+  toast(r.msg || (r.ok ? okMsg : r.error || "操作失败"), r.ok ? "ok" : "err");
+  if (r.ok && S.project?.stage === "review") {
+    const a = await api(`/api/projects/${S.pid}/approve`, "POST", {});
+    if (a.ok) { applyProject(a.project); loadProjects(); }
+  }
+}));
+pubAction("btn-wc-copy", "publish/wechat/copy", "富文本已复制，去公众号编辑器 Ctrl+V");
+pubAction("btn-wc-open", "publish/wechat/open", "已打开公众号后台（首次需扫码）");
+pubAction("btn-xhs-copy", "publish/xhs/copy", "文案已复制");
+pubAction("btn-xhs-open", "publish/xhs/open", "已打开小红书创作平台（首次需扫码）");
+
+$("btn-export").addEventListener("click", (e) => { if (!S.pid) { e.preventDefault(); requirePid(); } });
+$("btn-archive").addEventListener("click", (e) => busy(e.currentTarget, async () => {
+  if (!requirePid()) return;
+  const r = await api(`/api/projects/${S.pid}/archive`, "POST", {});
+  if (!r.ok) return toast(r.error || "归档失败", "err");
+  await loadProjects(); applyProject(r.project);
+  toast("已归档，交付清单已写入项目目录", "ok");
+}));
 
 // ── lightbox ───────────────────────────────────────────────
-function openLightbox(url, caption) {
-  let lb = document.getElementById("lb-overlay");
-  if (!lb) {
-    lb = document.createElement("div");
-    lb.id = "lb-overlay";
-    lb.innerHTML = `
-      <div class="lb-backdrop" onclick="closeLightbox()"></div>
-      <div class="lb-box">
-        <button class="lb-close" onclick="closeLightbox()">×</button>
-        <img class="lb-img" id="lb-img">
-        <div class="lb-cap" id="lb-cap"></div>
-      </div>`;
-    document.body.appendChild(lb);
-  }
-  document.getElementById("lb-img").src = url;
-  document.getElementById("lb-cap").textContent = caption || "";
-  lb.classList.add("lb-show");
-  document.addEventListener("keydown", lbKeyHandler);
+function openLightbox(url, cap) {
+  $("lb-img").src = url; $("lb-cap").textContent = cap || "";
+  $("lb-overlay").hidden = false;
 }
-function closeLightbox() {
-  const lb = document.getElementById("lb-overlay");
-  if (lb) lb.classList.remove("lb-show");
-  document.removeEventListener("keydown", lbKeyHandler);
-}
-function lbKeyHandler(e) { if (e.key === "Escape") closeLightbox(); }
-
-function showRenderPreview(htmlUrl, meta) {
-  if (!htmlUrl) return;
-  $("pv-frame").src = htmlUrl;
-  $("pv-render-link").href = htmlUrl;
-  show("pv-render");
-  markDone("st-pub", `${meta.word_count || 0}字`);
-}
-
-// ── publish ────────────────────────────────────────────────
-$("btn-wc-copy").addEventListener("click", async function () {
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/publish/wechat/copy`, "POST", {});
-  spin(this, false);
-  toast(r.msg || (r.ok ? "富文本已复制" : "复制失败"), r.ok ? "ok" : "err");
-});
-$("btn-wc-open").addEventListener("click", async function () {
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/publish/wechat/open`, "POST", {});
-  spin(this, false);
-  toast(r.ok ? "已打开公众号后台（首次扫码）" : "打开失败", r.ok ? "ok" : "err");
-});
-$("btn-xhs-copy").addEventListener("click", async function () {
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/publish/xhs/copy`, "POST", {});
-  spin(this, false);
-  toast(r.msg || (r.ok ? "文案已复制" : "复制失败"), r.ok ? "ok" : "err");
-});
-$("btn-xhs-open").addEventListener("click", async function () {
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/publish/xhs/open`, "POST", {});
-  spin(this, false);
-  toast(r.ok ? "已打开小红书（首次扫码）" : "打开失败", r.ok ? "ok" : "err");
-});
-$("btn-archive").addEventListener("click", async function () {
-  if (!PID) return;
-  spin(this, true);
-  const r = await api(`/api/projects/${PID}/archive`, "POST", {});
-  spin(this, false);
-  if (r.ok) { await loadProjects(); toast("已归档", "ok"); markDone("st-pub", "已归档"); }
-  else toast(r.error || "归档失败", "err");
+$("lb-overlay").addEventListener("click", () => ($("lb-overlay").hidden = true));
+document.addEventListener("keydown", (e) => e.key === "Escape" && ($("lb-overlay").hidden = true));
+document.addEventListener("click", (e) => {
+  const t = e.target.closest(".pv-thumb[data-url], .pv-cards img");
+  if (t) openLightbox(t.dataset.url || t.src, t.dataset.cap);
 });
 
 // ── init ───────────────────────────────────────────────────
 (async function init() {
   await Promise.all([loadHealth(), loadProjects()]);
-  if (PROJECTS.length) {
-    $("proj-sel").value = PROJECTS[0].id;
-    const r = await api("/api/projects/" + PROJECTS[0].id);
-    if (r.ok) loadProjectState(r.project);
-  }
-  setInterval(loadHealth, 30000);
+  if (S.projects.length) await openProject(S.projects[0].id);
+  else applyProject(null);
+  setInterval(loadHealth, 60000);
 })();

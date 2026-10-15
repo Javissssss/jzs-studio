@@ -1,174 +1,89 @@
-# 巨人之上 · 内容工作台（jzs-studio）
+# 巨人之上 · 内容工作台
 
-把「选题 → 写作 → 配图 → 排版 → 存草稿」整条双平台内容流水线封装成一个**本地 Web 产品**，脱离 AI 对话框独立运行，可跨电脑移植。
+[![CI](https://github.com/Javissssss/jzs-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Javissssss/jzs-studio/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-C96442)
+![License](https://img.shields.io/badge/license-MIT-87867F)
 
-- **双平台**：一篇内容同时产出 微信公众号长文 + 小红书图文笔记
-- **半自动写作**：产品不绑定任何 AI。它生成「创作简报」，你拿给任意 AI（ws / Codex / 通义 / Kimi / 豆包）出稿，把回复粘回来自动解析回填
-- **密钥不出本机**：素材源（Pexels）的 key 只走环境变量，绝不写入产品文件
-- **发布红线**：产品永远只到「存草稿」，正式发表按钮由你人工点
+**一篇内容，两个平台。** 本地运行的 Web 工作台：从热榜选题，到公众号长文和小红书图文的配图、排版、存草稿，全程 4 步完成。
 
----
+- **不绑定 AI**：工作台生成「创作简报」，你可以交给任意 AI（Codex / Kimi / 通义 / 豆包…）写稿，再把回复粘回来
+- **配图全自动**：框架图、氛围图、数据图和小红书卡片一键生成。AI 漏写配图位时自动补位
+- **人守红线**：只做到「存草稿」，正式发表由你亲手点。财经题自动加免责声明
+- **密钥不出本机**：API Key 只从环境变量读取，不写入任何文件
 
-## 一、快速开始
+## 快速开始
 
-### Windows
-双击 `run.bat`（首次会自动装依赖 + 下载浏览器内核，约 2-3 分钟），然后浏览器打开 http://127.0.0.1:8770
+| 系统 | 命令 |
+|---|---|
+| Windows | 双击 `run.bat` |
+| macOS / Linux | `chmod +x run.sh && ./run.sh` |
+| 手动 | `pip install -r requirements.txt && python -m playwright install chromium && python app.py` |
 
-### macOS / Linux
+首次运行会自动安装依赖并下载浏览器内核（约 2–3 分钟）。完成后会自动打开 <http://127.0.0.1:8770>。
+
+## 四步流程
+
+| 步 | 你做什么 | 工作台做什么 |
+|---|---|---|
+| 1 选题 | 选择来源（微博 / 头条 / 百度 / 手动 / 指定），点「选定」 | 抓取热榜，按「AI · 财经 · 效率」定位评分排序 |
+| 2 简报 & 回填 | 把简报粘给 AI，再把回复粘回来（Ctrl+Enter） | 生成简报并复制，解析双平台稿件，自动补配图位 |
+| 3 一键生产 | 点一个按钮 | 配图 → 小红书卡片 → 砖红米白排版，右侧实时预览 |
+| 4 确认 & 存草稿 | 看自检清单，复制粘贴到平台 | 复制富文本和文案，打开平台后台，打包 zip 下载 |
+
+稿件可以随时点「编辑稿件」修改，保存后会自动重新排版。
+
+## AI 回复格式
+
+简报末尾已经写好了格式要求，AI 照着输出即可。工作台按以下标记解析：
+
+```text
+===WECHAT_START===      公众号正文 Markdown（## 小节）
+===XHS_START===         小红书正文
+===XHS_TITLE_START===   小红书标题，每行一个
+===XHS_TAGS_START===    #标签
+===FIGURES_START===     框架图 JSON 数组
+===CHARTS_START===      数据图 JSON 数组
+（每块以对应的 _END=== 结尾）
+```
+
+正文占位符：`[FIGURE:f1] 图说`、`[MOOD:english query] 图说`、`[CHART:c1] 图说`、`[CLOSE]…[/CLOSE]`。
+
+没有标记也能用，整段回复会被当作公众号正文。
+
+## 配置
+
+复制 `.env.example` 查看全部变量，均为可选：
+
+| 变量 | 作用 |
+|---|---|
+| `PEXELS_API_KEY` | 氛围图素材源（[免费申请](https://www.pexels.com/api/)）。不设置时只影响氛围图 |
+| `UNSPLASH_ACCESS_KEY` | 备用素材源 |
+| `JZS_WORKSPACE` | 草稿目录，默认 `./workspace`（不入库） |
+
+发布辅助（复制富文本、打开后台）需要 `npm i -g agent-browser`（Node 18+）。首次使用需扫码登录。
+
+> 服务默认只监听 `127.0.0.1`，且没有登录鉴权。不要用 `--host 0.0.0.0` 暴露到公网。
+
+## 项目结构
+
+```text
+app.py              Flask 服务 + REST API
+core/               流水线：topics 选题 · brief 简报/解析 · enrich 配图补位
+                    media 配图 · cards 小红书卡片 · render 排版 · publish 发布辅助
+web/                单页工作台（原生 JS，无构建）
+skill/              可独立复用的内容技能包（脚本 / 模板 / 文风规范）
+tests/              离线单测 + API 测试
+```
+
+## 开发
+
 ```bash
-chmod +x run.sh && ./run.sh
+python -m unittest discover -s tests -v    # 离线测试，不需要网络和浏览器
+python app.py --debug
 ```
 
-### 手动启动
-```bash
-pip install -r requirements.txt
-python -m playwright install chromium   # 首次
-python app.py --port 8770
-```
+每次 push 和 PR 都会触发 GitHub Actions，在 Ubuntu 和 Windows 上分别跑测试。
 
----
+## License
 
-## 二、八步流水线
-
-| 步 | 阶段 | 做什么 | 人工确认点 |
-|----|------|--------|:---:|
-| 1 | 选题 | 微博热搜 / 头条热榜 / 手动粘贴 / 直接指定，按账号定位（AI·财经·效率）评分排序 | ✅ |
-| 2 | 创作简报 | 一键生成含文风铁律+结构模板+配图规划+输出标记的简报，复制给任意 AI | |
-| 3 | 回填稿件 | 把 AI 完整回复粘进来，按标记自动解析出双平台稿件+配图数据 | |
-| 4 | 配图制作 | 按正文占位符自动生成：框架图 / 氛围图(Pexels) / 数据图 + 小红书卡片 | |
-| 5 | 排版渲染 | 公众号正文+配图 → 砖红米白终版 HTML | |
-| 6 | 终稿确认 | 预览终版，检查排版/配图/免责声明 | ✅ |
-| 7 | 存草稿 | 复制富文本+打开平台，辅助你存草稿（永不点发表） | |
-| 8 | 完成归档 | 生成交付清单，产出文件在 workspace/<id>/output/ | |
-
----
-
-## 三、半自动写作流（核心）
-
-```
-[产品] 生成创作简报  ──复制──▶  [任意AI] 按标记出稿  ──粘回──▶  [产品] 自动解析回填
-```
-
-AI 回复需包含这些标记块（产品据此解析）：
-
-| 标记 | 内容 |
-|------|------|
-| `===WECHAT_START/END===` | 公众号正文 Markdown |
-| `===XHS_START/END===` | 小红书正文 |
-| `===XHS_TITLE_START/END===` | 小红书标题（每行一个） |
-| `===XHS_TAGS_START/END===` | 小红书标签 |
-| `===FIGURES_START/END===` | 框架图数据（JSON 数组） |
-| `===CHARTS_START/END===` | 数据图数据（JSON 数组） |
-
-正文里用占位符标注配图位置：
-- `[FIGURE:f1] 图说` —— 框架图（flow/compare/checklist/timeline）
-- `[MOOD:english query] 图说` —— 氛围图（Pexels 搜索，英文具象名词）
-- `[CHART:c1] 图说` —— 数据图
-- `[CLOSE]...[/CLOSE]` —— 结尾互动+免责声明块
-
-没有标记也能用：整段会被当作公众号正文。
-
----
-
-## 四、环境变量（可选）
-
-| 变量 | 用途 | 必需 |
-|------|------|:---:|
-| `PEXELS_API_KEY` | 氛围配图素材源（内网主力） | 否* |
-| `UNSPLASH_ACCESS_KEY` | 备用素材源 | 否 |
-
-\* 不设 Pexels key 时，氛围图不可用，但框架图/数据图/小红书卡片不受影响。
-
-设置（Windows，重开终端生效）：
-```cmd
-setx PEXELS_API_KEY "你的key"
-```
-
----
-
-## 五、发布说明（辅助式，非全自动）
-
-产品采用**辅助发布**而非模拟点击，更可靠：
-
-- **公众号**：把终版 HTML 渲染成富文本复制到剪贴板 → 打开公众号后台（首次扫码登录 jzs profile）→ 你在编辑器粘贴、存草稿
-- **小红书**：复制文案 + 打开创作平台（首次扫码登录 jzs-xhs profile）→ 你按序上传卡片、粘贴文案、存草稿
-
-登录态通过 agent-browser profile 复用，扫码一次后免登。**产品永不点「发表/发布」。**
-
----
-
-## 六、目录结构
-
-```
-jzs-studio/
-├── app.py              Flask 服务（端口 8770）
-├── core/               业务逻辑
-│   ├── config.py       路径/常量/设计Token
-│   ├── state.py        项目状态机
-│   ├── topics.py       选题（微博热搜/头条热榜/手动/直接）
-│   ├── brief.py        创作简报生成 + AI回复解析
-│   ├── media.py        配图（框架图/氛围图/数据图）
-│   ├── render.py       公众号 HTML 排版
-│   ├── cards.py        小红书卡片
-│   └── publish.py      辅助发布（draft-only）
-├── web/                前端（原生 HTML/CSS/JS）
-│   ├── index.html
-│   ├── style.css
-│   └── app.js
-├── skill/jzs-content-publisher/   内嵌 skill 包（脚本/模板/参考）
-├── workspace/          运行时项目数据（每个项目一个子目录）
-├── requirements.txt
-├── run.bat / run.sh
-└── README.md
-```
-
----
-
-## 七、新电脑部署（从 GitHub 克隆）
-
-```powershell
-# 1. 克隆仓库
-git clone https://github.com/Javissssss/jzs-studio.git
-cd jzs-studio
-
-# 2. 安装 Python 依赖
-pip install -r requirements.txt
-
-# 3. 下载 Playwright 浏览器内核（首次，约 100MB）
-python -m playwright install chromium
-
-# 4. 设置 Pexels API Key（永久写入用户环境变量，重开终端生效）
-#    不设则氛围配图不可用，其余功能正常
-[Environment]::SetEnvironmentVariable("PEXELS_API_KEY", "你的key", "User")
-
-# 5. 启动
-$env:PEXELS_API_KEY = [Environment]::GetEnvironmentVariable("PEXELS_API_KEY","User")
-$env:PYTHONUTF8 = "1"
-python app.py --port 8770
-```
-
-Windows 也可直接双击 `run.bat`（自动执行步骤 2-3-5）。
-
-> `workspace/` 不在仓库里，属于本地运行数据，新机器从空白开始。  
-> 历史项目如需迁移，手动把旧机器的 `workspace/` 目录整体复制过来即可。
-
-### 可选：发布功能
-
-发布环节（存草稿）需要 agent-browser：
-
-```powershell
-npm i -g agent-browser   # 需要 Node.js 18+
-```
-
-首次打开公众号/小红书时扫码登录一次，之后免登。
-
----
-
-## 八、依赖
-
-- Python 3.10+
-- flask、playwright（`requirements.txt`）
-- playwright chromium 内核（首次自动下载）
-- 可选：agent-browser（仅发布环节用，扫码登录）
-
-设计：砖红 `#C96442` / 米白 `#FAF9F5`，与公众号终版排版同源。
+[MIT](LICENSE)

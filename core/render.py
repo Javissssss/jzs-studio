@@ -85,13 +85,9 @@ def render_article(wechat_md, manifest, topic=None, column="巨人之上"):
 
     def flush_para():
         nonlocal para_buf
-        if para_buf:
-            txt = " ".join(para_buf).strip()
-            if txt:
-                return "<p>" + inline_md(txt) + "</p>"
-            para_buf = []
+        txt = _join_lines(para_buf)
         para_buf = []
-        return ""
+        return "<p>" + inline_md(txt) + "</p>" if txt else ""
 
     def flush_list():
         nonlocal list_buf
@@ -256,9 +252,11 @@ def render_article(wechat_md, manifest, topic=None, column="巨人之上"):
     emit(flush_list())
 
     # lead = first lead_buf paragraph text (strip tags) for hero subtitle
-    if lead_buf:
-        first = re.sub(r"<[^>]+>", "", lead_buf[0])
-        lead = first[:80]
+    # (skip figure/image blocks so a cover caption never becomes the subtitle)
+    for blk in lead_buf:
+        if blk.startswith("<p>"):
+            lead = re.sub(r"<[^>]+>", "", blk)[:80]
+            break
 
     # word count
     body_text = re.sub(r"\[[^\]]*\]|[<>]", "", re.sub(r"<[^>]+>", "", wechat_md))
@@ -314,7 +312,9 @@ def render_article(wechat_md, manifest, topic=None, column="巨人之上"):
     if src_note:
         parts.append(f"选题来源：{html.escape(src_note)}<br>")
     parts.append("配图：Pexels/Unsplash/Openverse 免版权素材 + 自制框架图<br>")
-    parts.append("免责声明：行情为已发生的客观描述，不构成任何买卖推荐。")
+    finance = config.is_finance(title + " " + topic.get("summary", ""))
+    if finance:
+        parts.append(f"免责声明：{config.FINANCE_DISCLAIMER}")
     parts.append("</footer>")
     # lightbox overlay (self-contained, no external deps)
     parts.append("""
@@ -335,13 +335,31 @@ document.querySelectorAll('a[data-lightbox]').forEach(function(a){
 </script>
 """)
     parts.append("</div></body></html>")
-    return "".join(parts), {
+    out_html = "".join(parts)
+    return out_html, {
+        "images": out_html.count('<img src="'),
+        "missing_images": out_html.count("（配图生成失败）"),
         "title": title,
         "lead": lead,
         "word_count": word_count,
         "read_min": read_min,
         "sections": len(sections),
+        "finance": finance,
+        "has_close": bool(close_buf),
     }
+
+
+def _join_lines(lines):
+    """Join soft-wrapped lines: no space between CJK, one space between Latin words."""
+    out = ""
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        if out and out[-1].isascii() and out[-1].isalnum() and ln[0].isascii() and ln[0].isalnum():
+            out += " "
+        out += ln
+    return out
 
 
 def _clean_heading(h):

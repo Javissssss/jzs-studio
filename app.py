@@ -7,14 +7,23 @@ import re
 import traceback
 
 from flask import Flask, jsonify, request, send_from_directory, abort
+from werkzeug.exceptions import HTTPException
 
-from core import config, state, topics, brief, media, render, cards, publish
+from core import config, state, topics, brief, enrich, media, render, cards, publish
 
 app = Flask(__name__, static_folder=None)
 config.ensure_dirs()
 
 
 # ---------- helpers ----------
+@app.errorhandler(HTTPException)
+def _json_error(e):
+    """API errors as JSON so the UI can show a readable toast."""
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": e.description}), e.code
+    return e
+
+
 def _load_or_404(pid):
     s = state.load(pid)
     if s is None:
@@ -180,113 +189,10 @@ def api_draft_fill(pid):
     figures = parsed.get("figures", [])
     charts = parsed.get("charts", [])
 
-    # ── Auto-inject rich media placeholders ──────────────────────────────
-    # Strategy:
-    #   1. Cover image  – always inject [MOOD:cover_query] at very top
-    #   2. Figure cards – inject [FIGURE:fN] after first H2 if missing
-    #   3. Section mood – inject [MOOD:section_query] into every H2 section
-    #   4. Chart        – inject [CHART:cN] if data present
-    import re as _re
-
-    topic_title = s.get("topic", {}).get("title", "")
-    topic_kw = re.sub(r"[^\w\s]", "", topic_title.lower())[:30].strip() or "knowledge"
-    # Convert Chinese topic to safe English search query
-    en_kw_map = {
-        "ai": "artificial intelligence technology",
-        "教育": "education learning classroom",
-        "经济": "economy finance business",
-        "股": "stock market trading",
-        "房": "real estate housing",
-        "健康": "health wellness lifestyle",
-        "政策": "government policy document",
-        "科技": "technology innovation digital",
-        "创业": "startup entrepreneurship office",
-        "职场": "workplace office professional",
-    }
-    cover_query = "modern knowledge concept abstract"
-    for cn, en in en_kw_map.items():
-        if cn in topic_title:
-            cover_query = en
-            break
-
-    existing_phs = set(_re.findall(r"\[(FIGURE|MOOD|CHART):([^\]]+)\]", wechat_md))
-    existing_ids = {key for _, key in existing_phs}
-    existing_types = {t for t, _ in existing_phs}
-
-    lines_out = wechat_md.splitlines()
-    result_lines = []
-    h2_count = 0
-    figure_inserted = set()
-    chart_inserted = set()
-
-    # Insert cover MOOD at very top (before first line) unless already present
-    has_cover = any(k.startswith("cover") for _, k in existing_phs)
-    if not has_cover:
-        result_lines.append(f"\n[MOOD:{cover_query}] 封面配图\n")
-
-    mood_queries = [
-        "office desk productivity focus",
-        "people learning concept idea",
-        "data analysis visualization chart",
-        "city technology modern future",
-        "notebook writing inspiration",
-    ]
-    mood_idx = 0
-
-    fig_by_order = list(figures)  # consume in order
-    fig_ptr = 0
-    ch_by_order = list(charts)
-    ch_ptr = 0
-
-    for ln in lines_out:
-        stripped = ln.strip()
-        result_lines.append(ln)
-
-        if stripped.startswith("## "):
-            h2_count += 1
-            # After each H2 heading: inject next figure card (first H2) or mood (subsequent)
-            if h2_count == 1 and fig_ptr < len(fig_by_order):
-                fig = fig_by_order[fig_ptr]
-                fid = str(fig.get("id", f"f{fig_ptr + 1}"))
-                if fid not in existing_ids:
-                    result_lines.append(
-                        f"\n[FIGURE:{fid}] {fig.get('caption', '框架图')}\n"
-                    )
-                    figure_inserted.add(fid)
-                fig_ptr += 1
-            elif h2_count > 1:
-                # inject atmosphere image for each section
-                q = mood_queries[mood_idx % len(mood_queries)]
-                mood_idx += 1
-                auto_key = f"sec{h2_count}"
-                if auto_key not in existing_ids:
-                    result_lines.append(f"\n[MOOD:{q}] 配图\n")
-                # inject remaining figure cards
-                if fig_ptr < len(fig_by_order):
-                    fig = fig_by_order[fig_ptr]
-                    fid = str(fig.get("id", f"f{fig_ptr + 1}"))
-                    if fid not in existing_ids:
-                        result_lines.append(
-                            f"\n[FIGURE:{fid}] {fig.get('caption', '框架图')}\n"
-                        )
-                        figure_inserted.add(fid)
-                    fig_ptr += 1
-
-    # Inject any remaining figures/charts at end
-    while fig_ptr < len(fig_by_order):
-        fig = fig_by_order[fig_ptr]
-        fid = str(fig.get("id", f"f{fig_ptr + 1}"))
-        if fid not in existing_ids and fid not in figure_inserted:
-            result_lines.append(f"\n[FIGURE:{fid}] {fig.get('caption', '框架图')}\n")
-        fig_ptr += 1
-    while ch_ptr < len(ch_by_order):
-        ch = ch_by_order[ch_ptr]
-        cid = str(ch.get("id", f"c{ch_ptr + 1}"))
-        if cid not in existing_ids and cid not in chart_inserted:
-            result_lines.append(f"\n[CHART:{cid}] {ch.get('caption', '数据图')}\n")
-        ch_ptr += 1
-
-    wechat_md = "\n".join(result_lines)
+    # fill image gaps the AI left (cover/section moods, unused figure/chart data)
+    wechat_md, enrich_report = enrich.ensure_placeholders(
+        wechat_md, s.get("topic", {}).get("title", ""), figures, charts
+    )
 
     s["draft"] = {
         "wechat_md": wechat_md,
@@ -297,12 +203,13 @@ def api_draft_fill(pid):
         "charts": charts,
     }
     s["stage"] = "media"
-    state.log(s, f"draft filled (parsed_ok={parsed['parsed_ok']})")
+    state.log(s, f"draft filled (parsed_ok={parsed['parsed_ok']}, enriched={enrich_report})")
     state.save(pid, s)
     return jsonify(
         {
             "ok": True,
             "parsed_ok": parsed["parsed_ok"],
+            "enriched": enrich_report,
             "project": _public(state.load(pid)),
         }
     )
@@ -329,32 +236,18 @@ def api_draft_edit(pid):
     return jsonify({"ok": True, "project": _public(s)})
 
 
-# ---------- stage 4: media ----------
-@app.route("/api/projects/<pid>/media/generate", methods=["POST"])
-def api_media_generate(pid):
-    s = _load_or_404(_safe_pid(pid))
+# ---------- stage 4+5: media & render ----------
+def _do_media(pid, s):
+    """Generate article images + XHS cards. Mutates and saves state."""
     d = s.get("draft", {})
-    wechat_md = d.get("wechat_md", "")
-    if not wechat_md:
-        return jsonify({"ok": False, "error": "no wechat draft"}), 400
-    try:
-        manifest = media.generate_media(
-            pid, wechat_md, figures=d.get("figures", []), charts=d.get("charts", [])
-        )
-    except Exception as e:
-        return jsonify(
-            {
-                "ok": False,
-                "error": f"{type(e).__name__}: {e}",
-                "tb": traceback.format_exc()[-500:],
-            }
-        ), 500
-    # XHS cards
-    card_info = {"ok": False, "pngs": [], "log": "skipped"}
+    manifest = media.generate_media(
+        pid, d["wechat_md"], figures=d.get("figures", []), charts=d.get("charts", [])
+    )
+    card_info = {"ok": False, "pngs": [], "log": "skipped (no xhs draft)"}
     if d.get("xhs_md"):
         try:
             card_info = cards.generate_cards(
-                pid, d.get("xhs_md", ""), d.get("xhs_titles", []), d.get("xhs_tags", [])
+                pid, d["xhs_md"], d.get("xhs_titles", []), d.get("xhs_tags", [])
             )
         except Exception as e:
             card_info = {"ok": False, "pngs": [], "log": str(e)[:200]}
@@ -365,51 +258,55 @@ def api_media_generate(pid):
         "cards_log": card_info.get("log", ""),
     }
     ok_count = sum(1 for m in manifest if m.get("ok"))
-    state.log(
-        s,
-        f"media generated: {ok_count}/{len(manifest)} placeholders, cards={len(card_info.get('pngs', []))}",
-    )
+    state.log(s, f"media: {ok_count}/{len(manifest)} images, {len(s['media']['cards'])} cards")
+    s["stage"] = "render"
     state.save(pid, s)
-    return jsonify({"ok": True, "project": _public(state.load(pid))})
 
 
-# ---------- stage 5: render ----------
-@app.route("/api/projects/<pid>/render", methods=["POST"])
-def api_render(pid):
-    s = _load_or_404(_safe_pid(pid))
+def _do_render(pid, s):
+    """Render WeChat HTML + markdown. Mutates and saves state."""
     d = s.get("draft", {})
-    wechat_md = d.get("wechat_md", "")
-    if not wechat_md:
-        return jsonify({"ok": False, "error": "no wechat draft"}), 400
     manifest = s.get("media", {}).get("manifest", [])
+    html_str, meta = render.render_article(d["wechat_md"], manifest, topic=s.get("topic", {}))
+    path = render.save_html(pid, html_str, title=meta.get("title", "article"))
+    md_path = path[: -len(".html")] + ".md"
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(d["wechat_md"])
+    s["render"] = {"html_path": path, "md_path": md_path, "meta": meta}
+    s["stage"] = "review"
+    state.log(s, f"rendered: {meta.get('word_count', 0)} chars, {meta.get('sections', 0)} sections")
+    state.save(pid, s)
+
+
+def _step(pid, *steps):
+    """Run media/render steps with uniform error handling."""
+    s = _load_or_404(_safe_pid(pid))
+    if not s.get("draft", {}).get("wechat_md"):
+        return jsonify({"ok": False, "error": "还没有公众号稿件，请先回填"}), 400
     try:
-        html_str, meta = render.render_article(
-            wechat_md, manifest, topic=s.get("topic", {})
-        )
-        path = render.save_html(pid, html_str, title=meta.get("title", "article"))
-        # also save markdown
-        md_path = os.path.join(
-            config.project_dir(pid),
-            "output",
-            f"公众号_{re.sub(r'[^\\w\\u4e00-\\u9fff-]', '', meta.get('title', ''))[:30] or 'article'}_终版.md",
-        )
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(wechat_md)
+        for fn in steps:
+            fn(pid, s)
     except Exception as e:
         return jsonify(
-            {
-                "ok": False,
-                "error": f"{type(e).__name__}: {e}",
-                "tb": traceback.format_exc()[-500:],
-            }
+            {"ok": False, "error": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()[-500:]}
         ), 500
-    s["render"] = {"html_path": path, "md_path": md_path, "meta": meta}
-    state.log(
-        s,
-        f"rendered html: {meta.get('word_count', 0)} words, {meta.get('sections', 0)} sections",
-    )
-    state.save(pid, s)
     return jsonify({"ok": True, "project": _public(state.load(pid))})
+
+
+@app.route("/api/projects/<pid>/media/generate", methods=["POST"])
+def api_media_generate(pid):
+    return _step(pid, _do_media)
+
+
+@app.route("/api/projects/<pid>/render", methods=["POST"])
+def api_render(pid):
+    return _step(pid, _do_render)
+
+
+@app.route("/api/projects/<pid>/produce", methods=["POST"])
+def api_produce(pid):
+    """One click: images + cards + layout."""
+    return _step(pid, _do_media, _do_render)
 
 
 # ---------- stage 6: review ----------
@@ -516,6 +413,30 @@ def api_archive(pid):
     return jsonify(
         {"ok": True, "manifest": manifest_md, "project": _public(state.load(pid))}
     )
+
+
+@app.route("/api/projects/<pid>/export.zip", methods=["GET"])
+def api_export(pid):
+    """Download all deliverables (output/ + brief + manifest) as one zip."""
+    import io
+    import zipfile
+
+    from flask import send_file
+
+    s = _load_or_404(_safe_pid(pid))
+    pdir = config.project_dir(pid)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, _, files in os.walk(pdir):
+            for f in files:
+                if f == "state.json" or f.startswith("_"):
+                    continue  # internal files
+                full = os.path.join(root, f)
+                z.write(full, os.path.relpath(full, pdir))
+    buf.seek(0)
+    safe = re.sub(r"[^\w\u4e00-\u9fff-]", "", s.get("title", ""))[:30] or pid
+    return send_file(buf, mimetype="application/zip", as_attachment=True,
+                     download_name=f"jzs_{safe}.zip")
 
 
 # ---------- health ----------
